@@ -18,17 +18,17 @@
  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  SOFTWARE.
-*/
+ */
 
 #ifndef _LIBSERV_H
 #define _LIBSERV_H
 
 #ifdef __linux__
-	#include <linux/version.h>
-	#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,44)
-		#define EPOLL
-	#endif
-	/* TODO: Check if poll is avalable. If not, fallback to select */
+    #include <linux/version.h>
+    #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,44)
+        #define EPOLL
+    #endif
+    /* TODO: Check if poll is avalable. If not, fallback to select */
 #endif
 
 int tcp_server(char *, char *, int(*)(int), void(*)(int, char *, int *));
