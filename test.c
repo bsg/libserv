@@ -9,7 +9,6 @@ int read_handler(int fd) {
 
 	nread = tcp_read(fd, buffer, 255);
 	buffer[nread] = '\0';
-	printf("Received: %s", buffer);
 
 	tcp_write(fd, buffer, nread);
 

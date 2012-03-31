@@ -20,8 +20,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-/* TODO: Better error messages */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -397,9 +395,11 @@ int tcp_server(char *hostname, char *port,
                         close(events[i].data.fd);
 
                         /* Remove the fd from the fd set */
-                        struct epoll_event ev_tmp; /* This one is ignored by epoll_ctl. The whole purpose
-                                                   of it's existence is compatibility with Linux kernel
-                                                   versions before 2.6.9 */
+                        struct epoll_event ev_tmp; /* This one is ignored by epoll_ctl. The whole
+                                                   purpose of it's existence is compatibility with
+                                                   Linux kernel versions before 2.6.9 */
+
+                        /* TODO: epoll_ctl seems to be expansive. Remove and profile */
                         epoll_ctl(fd_epoll, EPOLL_CTL_DEL, events[i].data.fd, &ev_tmp);
                     }
                 }
