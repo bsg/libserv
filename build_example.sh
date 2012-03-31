@@ -1,1 +1,1 @@
-gcc test.c libserv.c -o test
+gcc example.c ./src/libserv.c -o example
