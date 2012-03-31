@@ -1,3 +1,9 @@
+libserv - A cross-platform TCP server library
+
 Copy libserv.c and libserv.h into your source folder and include libserv.h
 
 Windows users, in addition to the above, need to link ws2_32.dll.
+
+Please see example.c for usage.
+
+IMPORTANT NOTE: This software is not tested thoroughly and should not be used in a serious project.
