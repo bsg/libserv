@@ -396,7 +396,7 @@ int tcp_server(char *hostname, char *port,
 
                         /* Remove the fd from the fd set */
                         struct epoll_event ev_tmp; /* This one is ignored by epoll_ctl. The whole
-                                                   purpose of it's existence is compatibility with
+                                                   purpose of its existence is compatibility with
                                                    Linux kernel versions before 2.6.9 */
 
                         /* TODO: epoll_ctl seems to be expensive. Remove and profile */
