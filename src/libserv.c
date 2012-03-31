@@ -399,7 +399,7 @@ int tcp_server(char *hostname, char *port,
                                                    purpose of it's existence is compatibility with
                                                    Linux kernel versions before 2.6.9 */
 
-                        /* TODO: epoll_ctl seems to be expansive. Remove and profile */
+                        /* TODO: epoll_ctl seems to be expensive. Remove and profile */
                         epoll_ctl(fd_epoll, EPOLL_CTL_DEL, events[i].data.fd, &ev_tmp);
                     }
                 }
