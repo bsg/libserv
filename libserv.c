@@ -197,6 +197,10 @@ int tcp_connect(char *hostname, char *port) {
     return fd;
 }
 
+int tcp_close(int fd) {
+    return close(fd);
+}
+
 int tcp_accept(int fd, char *ip, int *port, int flags) {
     int fd_new;
     struct sockaddr_in addr;

@@ -35,4 +35,7 @@ int tcp_server(char *, char *, int(*)(int), void(*)(int, char *, int *));
 int tcp_read(int, char *, int);
 int tcp_write(int, char *, int);
 
+int tcp_connect(char *, char *);
+int tcp_close(int);
+
 #endif
