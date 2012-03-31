@@ -1,1 +1,3 @@
-Work in progress...
+Copy libserv.c and libserv.h into your source folder and include libserv.h
+
+Windows users, in addition to the above, need to link ws2_32.dll.
