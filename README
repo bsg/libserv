@@ -1,4 +1,4 @@
-libserv - A cross-platform TCP server library
+libserv - A cross-platform non-blocking TCP server library
 
 Copy libserv.c and libserv.h into your source folder and include libserv.h
 
