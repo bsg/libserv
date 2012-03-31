@@ -1,5 +1,8 @@
 /* A simple, 'single-thread multiple-connection' echo server */
 
+/* After compiling and running the server, connect to it using 
+ 'nc localhost 9999' or 'telnet localhost 9999'. */
+
 #include <stdlib.h>
 #include <stdio.h>
 #include "src/libserv.h"
