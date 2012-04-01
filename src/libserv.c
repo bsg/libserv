@@ -46,11 +46,11 @@ SOFTWARE.
 
 typedef int socklen_t;
 
-inline int read(int fd, char *buffer, int size) {
+static inline int read(int fd, char *buffer, int size) {
     return recv(fd, buffer, size, 0);
 }
 
-inline int write(int fd, char *buffer, int size) {
+static inline int write(int fd, char *buffer, int size) {
     return send(fd, buffer, size, 0);
 }
 #endif
@@ -95,7 +95,7 @@ static inline void _error(const char *func, int line, const char *msg) {
 #define SOCK_NONBLOCK 1
 #endif
 
-int setnoblock(int fd) {
+static int setnoblock(int fd) {
 #ifndef WIN32
     int flags;
     flags = fcntl(fd, F_GETFL, 0);
@@ -108,7 +108,7 @@ int setnoblock(int fd) {
 #endif
 }
 
-int tcp_create_listener(char *hostname, char *port) {
+static int tcp_create_listener(char *hostname, char *port) {
     int status, fd;
     struct addrinfo hints;
     struct addrinfo *servinfo;
@@ -199,7 +199,7 @@ int tcp_close(int fd) {
     return close(fd);
 }
 
-int tcp_accept(int fd, char *ip, int *port, int flags) {
+static int tcp_accept(int fd, char *ip, int *port, int flags) {
     int fd_new;
     struct sockaddr_storage addr;
     socklen_t addrlen = sizeof(addr);
