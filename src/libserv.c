@@ -201,7 +201,7 @@ int tcp_close(int fd) {
 
 int tcp_accept(int fd, char *ip, int *port, int flags) {
     int fd_new;
-    struct sockaddr_in addr;
+    struct sockaddr_storage addr;
     socklen_t addrlen = sizeof(addr);
 
 #ifdef linux
@@ -233,8 +233,20 @@ int tcp_accept(int fd, char *ip, int *port, int flags) {
             setnoblock(fd_new);
 #endif
         /* Fill in address info buffers */
-        if(ip) inet_ntop(AF_INET, &addr.sin_addr, ip, INET6_ADDRSTRLEN);
-        if(port) *port = ntohs(addr.sin_port);
+        if(addr.ss_family == AF_INET) {
+            /* IPv4 */
+            struct sockaddr_in *s = (struct sockaddr_in *) &addr;
+
+            if(ip) inet_ntop(AF_INET, &s->sin_addr, ip, INET6_ADDRSTRLEN);
+            if(port) *port = ntohs(s->sin_port);
+        }
+        else {
+            /* IPv6 */
+            struct sockaddr_in6 *s = (struct sockaddr_in6 *) &addr;
+
+            if(ip) inet_ntop(AF_INET6, &s->sin6_addr, ip, INET6_ADDRSTRLEN);
+            if(port) *port = ntohs(s->sin6_port);
+        }
 
         return fd_new;
     }
@@ -242,6 +254,7 @@ int tcp_accept(int fd, char *ip, int *port, int flags) {
 
 /* TODO: Inline and profile */
 int tcp_read(int fd, char *buf, int size) {
+    /* TODO: Handle EINTR */
     int nread, total_read = 0;
 
     /* Make sure 'size' bytes are read */
@@ -259,6 +272,7 @@ int tcp_read(int fd, char *buf, int size) {
 
 /* TODO: Inline and profile */
 int tcp_write(int fd, char *buf, int size) {
+    /* TODO: Handle EINTR */
     int nwritten, total_written = 0;
 
     /* Make sure 'size' bytes are written */
