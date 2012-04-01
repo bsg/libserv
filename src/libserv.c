@@ -72,18 +72,17 @@ static inline int write(int fd, char *buffer, int size) {
 #define MAXEVENTS 64
 
 #ifdef __GNUC__
-#define likely(x)   __builtin_expect((x),1)
+#define likely(x) __builtin_expect((x),1)
 #define unlikely(x) __builtin_expect((x),0)
 #else
 #define likely(x) x
 #define unlikely(x) x
 #endif
 
+/* TODO: A better error handling mechanism should be implemented */
 #ifdef __GNUC__
-#define error(msg)  _error(__func__, __LINE__, msg)
-#endif
-
-#ifdef MSVC
+#define error(msg) _error(__func__, __LINE__, msg)
+#else
 #define error(msg) _error(__FUNCTION__, __LINE__, msg)
 #endif
 
@@ -141,7 +140,11 @@ static int tcp_create_listener(char *hostname, char *port) {
 #endif
 
     /* Make the socket available for reuse immediately after it's closed */
+#ifdef WIN32
+    status = setsockopt(fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, &reuse_addr, sizeof(reuse_addr));
+#else
     status = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse_addr, sizeof(reuse_addr));
+#endif
     if(status == -1) {
         perror("setsockopt");
         return -1;
@@ -208,10 +211,7 @@ static int tcp_accept(int fd, char *ip, int *port, int flags) {
     fd_new = accept4(fd, (struct sockaddr *) &addr, &addrlen, flags);
 #else
     /* Fallback to accept if accept4 is not implemented */
-
-    //fd_new = accept(fd, (struct sockaddr *) &addr, &addrlen);
-    /* FIXME: The line above fails on WIN32 for some reason. Below is a temporary kludge. */
-    fd_new = accept(fd, (struct sockaddr *) &addr, NULL);
+    fd_new = accept(fd, (struct sockaddr *) &addr, &addrlen);
 #endif
 
     if(fd_new == -1) {
@@ -280,7 +280,7 @@ int tcp_write(int fd, char *buf, int size) {
         nwritten = write(fd, buf, size - total_written);
 
         switch(nwritten) {
-            case  0: return total_written; break;
+            case 0: return total_written; break;
             case -1: return -1; break;
         }
 
@@ -300,7 +300,7 @@ int tcp_server(char *hostname, char *port,
 
         int listener_fd, fd_epoll, cli_fd, nfds, i, status;
         char *cli_addr;
-        int  *cli_port;
+        int *cli_port;
 
         /* We must have a read handler */
         if(read_handler == NULL) {
@@ -366,7 +366,7 @@ int tcp_server(char *hostname, char *port,
                     while(1) {
                         /* Allocate space for address and port info */
                         cli_addr = (char *) calloc(INET6_ADDRSTRLEN, sizeof(char));
-                        cli_port = (int  *) calloc(1, sizeof(int));
+                        cli_port = (int *) calloc(1, sizeof(int));
 
                         /* Accept the connection */
                         cli_fd = tcp_accept(listener_fd, cli_addr, cli_port, SOCK_NONBLOCK);
@@ -410,8 +410,8 @@ int tcp_server(char *hostname, char *port,
 
                         /* Remove the fd from the fd set */
                         struct epoll_event ev_tmp; /* This one is ignored by epoll_ctl. The whole
-                                                   purpose of its existence is compatibility with
-                                                   Linux kernel versions before 2.6.9 */
+purpose of its existence is compatibility with
+Linux kernel versions before 2.6.9 */
 
                         /* TODO: epoll_ctl seems to be expensive. Remove and profile */
                         epoll_ctl(fd_epoll, EPOLL_CTL_DEL, events[i].data.fd, &ev_tmp);
@@ -439,7 +439,7 @@ int tcp_server(char *hostname, char *port,
 
         int listener_fd, cli_fd, i, status, fdmax;
         char *cli_addr;
-        int  *cli_port;
+        int *cli_port;
 
         /* fd sets for select() */
         fd_set fds_master, fds_read;
@@ -501,7 +501,7 @@ int tcp_server(char *hostname, char *port,
                         while(1) {
                             /* Allocate space for address and port info */
                             cli_addr = (char *) calloc(INET6_ADDRSTRLEN, sizeof(char));
-                            cli_port = (int  *) calloc(1, sizeof(int));
+                            cli_port = (int *) calloc(1, sizeof(int));
 
                             /* Accept the connection */
                             cli_fd = tcp_accept(listener_fd, cli_addr, cli_port, SOCK_NONBLOCK);
