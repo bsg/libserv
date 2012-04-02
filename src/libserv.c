@@ -55,6 +55,16 @@ static inline int write(int fd, char *buffer, int size) {
 }
 #endif
 
+/* Detect the best event notification mechanism available */
+#ifdef __linux__
+    #include <linux/version.h>
+    #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,44)
+        #define EPOLL
+    #endif
+    /* TODO: Check if poll, kqueue or IOCP is avalable.
+       If not, fallback to select */
+#endif
+
 #ifdef EPOLL
 #include <sys/epoll.h>
 #else
@@ -132,7 +142,6 @@ static int tcp_create_listener(char *hostname, char *port) {
     }
 
 
-
 #ifndef WIN32
     int reuse_addr = 1;
 #else
@@ -141,6 +150,8 @@ static int tcp_create_listener(char *hostname, char *port) {
 
     /* Make the socket available for reuse immediately after it's closed */
 #ifdef WIN32
+    /* NOTE: It turns out Win32 definition of SO_REUSEADDR is not the same as the POSIX definition.
+       Instead we use SO_EXCLUSIVEADDRUSE */
     status = setsockopt(fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, &reuse_addr, sizeof(reuse_addr));
 #else
     status = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse_addr, sizeof(reuse_addr));
