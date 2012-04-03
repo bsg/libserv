@@ -32,7 +32,9 @@ void on_accept(int fd, char *addr, int *port) {
 
 int main(void) {
     /* Initialize and start the server */
-    tcp_server(NULL, "9999", &read_handler, &on_accept);
+    if(tcp_server(NULL, "9999", &read_handler, &on_accept) == -1) {
+        perror("tcp_server");
+    }
     /* Yep, that's all */
 
     return 0;

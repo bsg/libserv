@@ -60,9 +60,16 @@ static inline int write(int fd, char *buffer, int size) {
     #include <linux/version.h>
     #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,44)
         #define EPOLL
-    #endif
+    #else
     /* TODO: Check if poll, kqueue or IOCP is avalable.
        If not, fallback to select */
+        #define SELECT
+    #endif
+#endif
+
+#ifdef WIN32
+    /* TODO: Check if IOCP exists. Otherwise, fallback to select */
+    #define SELECT
 #endif
 
 #ifdef EPOLL
@@ -79,6 +86,7 @@ static inline int write(int fd, char *buffer, int size) {
 #endif
 
 /* TODO: Tweak this number and profile */
+/* TODO: Disregard that. Better let the user specify MAXEVENTS */
 #define MAXEVENTS 64
 
 #ifdef __GNUC__
@@ -89,20 +97,12 @@ static inline int write(int fd, char *buffer, int size) {
 #define unlikely(x) x
 #endif
 
-/* TODO: A better error handling mechanism should be implemented */
-#ifdef __GNUC__
-#define error(msg) _error(__func__, __LINE__, msg)
-#else
-#define error(msg) _error(__FUNCTION__, __LINE__, msg)
-#endif
-
-static inline void _error(const char *func, int line, const char *msg) {
-    printf("[ERROR] Line %d in %s(): %s\n", line, func, msg);
-}
-
 #ifndef SOCK_NONBLOCK
 #define SOCK_NONBLOCK 1
 #endif
+
+#define LISTEN_BACKLOG 5 /* TODO: This one should be a variable that the user is
+                            allowed to specify */
 
 static int setnoblock(int fd) {
 #ifndef WIN32
@@ -131,15 +131,13 @@ static int tcp_create_listener(char *hostname, char *port) {
 
     status = getaddrinfo(hostname, port, &hints, &servinfo);
     if(status) {
-        perror("getaddrinfo");
+        /* TODO: Check the error code and set errno appropriately */
         return -1;
     }
 
     fd = socket(servinfo->ai_family, servinfo->ai_socktype, servinfo->ai_protocol);
-    if(fd == -1) {
-        perror("socket");
+    if(fd == -1)
         return -1;
-    }
 
 
 #ifndef WIN32
@@ -156,24 +154,18 @@ static int tcp_create_listener(char *hostname, char *port) {
 #else
     status = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse_addr, sizeof(reuse_addr));
 #endif
-    if(status == -1) {
-        perror("setsockopt");
+    if(status == -1)
         return -1;
-    }
 
     /* Bind the socket to the address */
     status = bind(fd, servinfo->ai_addr, servinfo->ai_addrlen);
-    if(status == -1) {
-        perror("bind");
+    if(status == -1)
         return -1;
-    }
 
     /* Listen for incoming connections */
-    status = listen(fd, 5);
-    if(status == -1) {
-        perror("listen");
+    status = listen(fd, LISTEN_BACKLOG);
+    if(status == -1)
         return -1;
-    }
 
     return fd;
 }
@@ -189,20 +181,17 @@ int tcp_connect(char *hostname, char *port) {
 
     status = getaddrinfo(hostname, port, &hints, &servinfo);
     if(status) {
-        error("getaddrinfo");
+        /* TODO: Check the error code and set errno appropriately */
+        return -1;
     }
 
     fd = socket(servinfo->ai_family, servinfo->ai_socktype, servinfo->ai_protocol);
-    if(fd == -1) {
-        perror("socket");
+    if(fd == -1)
         return -1;
-    }
 
     status = connect(fd, servinfo->ai_addr, servinfo->ai_addrlen);
-    if(status == -1) {
-        perror("connect");
+    if(status == -1)
         return -1;
-    }
 
     freeaddrinfo(servinfo);
 
@@ -226,17 +215,8 @@ static int tcp_accept(int fd, char *ip, int *port, int flags) {
 #endif
 
     if(fd_new == -1) {
-#ifdef WIN32
-        if(WSAGetLastError() != WSAEWOULDBLOCK)
-#else
-        if((errno != EAGAIN) || (errno != EWOULDBLOCK))
-#endif
-        {
-            error("accept");
-        }
         return -1;
     }
-
     else {
 #ifndef linux
         /* accept() doesn't accept flags so we need to set non-blocking mode manually */
@@ -266,6 +246,10 @@ static int tcp_accept(int fd, char *ip, int *port, int flags) {
 /* TODO: Inline and profile */
 int tcp_read(int fd, char *buf, int size) {
     /* TODO: Handle EINTR */
+    /* TODO: Busy-waiting until the specified size is read is not a good idea,
+       considering huge data and/or slow connections. Add a 'noblock' argument
+       that will let the function return in case EAGAIN/EWOULDBLOCK is set after
+       read() */
     int nread, total_read = 0;
 
     /* Make sure 'size' bytes are read */
@@ -284,6 +268,7 @@ int tcp_read(int fd, char *buf, int size) {
 /* TODO: Inline and profile */
 int tcp_write(int fd, char *buf, int size) {
     /* TODO: Handle EINTR */
+    /* TODO: Add a 'noblock' argument for the same reasons as in tcp_read() */
     int nwritten, total_written = 0;
 
     /* Make sure 'size' bytes are written */
@@ -302,275 +287,347 @@ int tcp_write(int fd, char *buf, int size) {
 }
 
 #ifdef EPOLL
+
+#define EVENTRD    EPOLLIN
+#define EVENTWR    EPOLLOUT
+#define EVENTHUP   EPOLLHUP
+#define EVENTRDHUP EPOLLRDHUP
+#define EVENTERR   EPOLLERR
+
+typedef struct {
+    struct epoll_event *events;
+    int    epfd, nfds, fd_index, max_events;
+} event_t;
+
+static inline int event_init(event_t *event, int max_events) {
+    event->epfd = epoll_create1(0);
+    event->nfds = 0;
+    event->fd_index = 0;
+    event->max_events = max_events;
+
+    event->events = calloc(max_events, sizeof(struct epoll_event));
+    if(event->events == NULL)
+        return -1;
+
+    return event->epfd;        
+}
+
+static inline int event_add_fd(event_t *event, int fd, uint32_t flags) {
+        struct epoll_event tmp_event;
+
+        tmp_event.data.fd = fd;
+        tmp_event.events = flags | EPOLLET; /* Use the edge-triggered mode */
+
+        return epoll_ctl(event->epfd, EPOLL_CTL_ADD, fd, &tmp_event);
+}
+
+static inline int event_remove_fd(event_t *event, int fd) {
+    struct epoll_event tmp_event; /* Required for linux versions before 2.6.9 */
+
+    return epoll_ctl(event->epfd, EPOLL_CTL_DEL, fd, &tmp_event);
+}
+
+static inline int event_wait(event_t *event, int *event_fd, int *event_type) {
+    if(event->nfds == 0) {
+        /* All events processed so far. Wait for new events */
+        event->fd_index = 0;
+        event->nfds = epoll_wait(event->epfd, event->events, event->max_events, -1);
+    }
+
+    /* Preserve the errno and notify the caller that an error has occured */
+    if(event->nfds <= 0) {
+        /* Error occured or there are no events waiting to be handled */
+        *event_type = 0;
+        return event->nfds; /* Return value is -1 on error */
+    }
+
+    /* Pass the next event to the caller */
+    *event_type = event->events[event->fd_index].events;
+    *event_fd   = event->events[event->fd_index].data.fd;
+
+    /* Point to the next event to be handled */
+    if(event->fd_index < event->nfds)
+        event->fd_index++;
+    else {
+        event->nfds = 0;
+        *event_type = 0;
+        return 0; /* All events have been handled */
+    }
+    
+    /* Return the number of events waiting to be handled */
+    return (event->nfds - event->fd_index);
+}
+
+static inline int event_free(event_t *event) {
+    free(event->events);
+    
+    if(close(event->epfd) == -1)
+        return -1;
+}
+#endif
+
+#ifdef SELECT
+
+#define EVENTRD     1
+#define EVENTWR     2
+#define EVENTHUP    4
+#define EVENTRDHUP  8
+#define EVENTERR   16
+
+typedef struct {
+    fd_set fds_read_master, fds_read, fds_write_master, fds_write;
+    int fdmax, nfds, fd_index;
+} event_t;
+
+static inline int event_init(event_t *event, int max_events) {
+    /* Initialize the fd sets */
+    FD_ZERO(&(event->fds_read_master));
+    FD_ZERO(&(event->fds_read));
+
+    FD_ZERO(&(event->fds_write_master));
+    FD_ZERO(&(event->fds_write));
+
+    event->fdmax = 0;
+    event->nfds  = 0;
+    event->fd_index  = 0;
+
+    return 0;
+}
+
+static inline int event_add_fd(event_t *event, int fd, uint32_t flags) {
+    if(fd >= FD_SETSIZE) {
+        errno = EBUSY; /* fd set is full */
+        return -1;
+    }
+
+    if(flags & EVENTRD) {
+        /* Add the fd to the read fd_set */
+        FD_SET(fd, &(event->fds_read_master));
+    }
+
+    if(flags & EVENTWR) {
+        /* Add the fd to the write fd_set */
+        FD_SET(fd, &(event->fds_write_master));
+    }
+
+    /* Update fdmax */
+    if(fd > event->fdmax)
+        event->fdmax = fd;
+
+    return 0;
+}
+
+static inline int event_remove_fd(event_t *event, int fd) {
+    /* Remove from all fd sets */
+    FD_CLR(fd, &(event->fds_read_master));
+    FD_CLR(fd, &(event->fds_write_master));
+    FD_CLR(fd, &(event->fds_read));
+    FD_CLR(fd, &(event->fds_write));
+
+    /* Update fdmax */
+    if(fd == event->fdmax) {
+        event->fdmax--;
+
+        /* The fd that is being handled has just been removed. All the previous
+           fds have already been handled */
+        if(fd == event->fd_index)
+            event->nfds = 0;
+    }
+
+    return 0;
+}
+
+static inline int event_wait(event_t *event, int *event_fd, int *event_type) {
+    if(event->nfds == 0) {
+        /* All events processed so far. Wait for new events */
+        event->fds_read = event->fds_read_master;
+        event->fds_write = event->fds_write_master;
+        event->fd_index = 0;
+
+        event->nfds = select(event->fdmax + 1, &(event->fds_read),
+                            &(event->fds_write), NULL, NULL);
+    }
+    
+    if(event->nfds == -1) {
+        /* An error occured */
+        *event_type = EVENTERR;
+        event->nfds = 0;
+
+        return -1;
+    }
+    else if(event->nfds == 0) {
+        /* No events waiting to be processed */
+        *event_type = 0;
+        
+        return 0;
+    }
+
+    /* Find the next ready fd */
+    for(;(event->fd_index <= event->fdmax) && (event->nfds > 0); event->fd_index++) {
+        *event_type = 0;
+        if(FD_ISSET(event->fd_index, &(event->fds_read))) {
+            /* fd ready for read */
+            *event_fd   = event->fd_index;
+            *event_type |= EVENTRD;
+            event->nfds--;
+            FD_CLR(event->fd_index, &(event->fds_read));
+        }
+
+        if(FD_ISSET(event->fd_index, &(event->fds_write))) {
+            /* fd ready for write */
+            *event_fd   = event->fd_index;
+            *event_type |= EVENTWR;
+            event->nfds--;
+        }
+
+        if(*event_type) {
+            /* TODO: Notify the caller about the event */
+            break;
+        }
+    }
+
+    return event->nfds;
+}
+
+static inline int event_free(event_t *event) {
+    /* Nothing to free */
+    return 0;
+} 
+
+#endif
+
+
 int tcp_server(char *hostname, char *port,
     int (*read_handler)(int),
     void(*on_accept)(int, char *, int *)) {
 
-        struct epoll_event event;
-        struct epoll_event *events;
+        event_t event;
 
-        int listener_fd, fd_epoll, cli_fd, nfds, i, status;
+        int listener_fd, cli_fd, event_fd, event_type, *cli_port;
         char *cli_addr;
-        int *cli_port;
+
+        cli_addr = calloc(INET6_ADDRSTRLEN, sizeof(char));
+        cli_port = calloc(1, sizeof(int));
 
         /* We must have a read handler */
         if(read_handler == NULL) {
-            error("No read handler");
+            errno = EINVAL; /* Invalid argument */
             return -1;
         }
 
         /* Create a listener socket */
-        listener_fd = tcp_create_listener(hostname, port);
-        if(listener_fd == -1) {
-            error("Could not create a listener socket");
-            goto exit; /* Yeah yeah yeah... I know... */
-        }
+        if((listener_fd = tcp_create_listener(hostname, port)) == -1)
+            return -1;
 
         /* The listener must not block */
-        status = setnoblock(listener_fd);
-        if(status == -1) {
-            perror("setnoblock");
-            goto exit;
-        }
+        if(setnoblock(listener_fd) == -1)
+            return -1;
 
-        fd_epoll = epoll_create1(0);
-        if(fd_epoll == -1) {
-            perror("epoll_create1");
-            goto exit;
-        }
+        /* Initialize the event notification mechanism */
+        if(event_init(&event, MAXEVENTS) == -1)
+            return -1;
 
-        /* Add the listener to the fd set */
-        event.data.fd = listener_fd;
-        event.events = EPOLLIN | EPOLLET;
-        status = epoll_ctl(fd_epoll, EPOLL_CTL_ADD, listener_fd, &event);
-        if(status == -1) {
-            perror("epoll_ctl");
-            goto exit;
-        }
+        /* Request read event notifications for the listener */
+        if(event_add_fd(&event, listener_fd, EVENTRD) == -1)
+            return -1;
 
-        events = calloc(MAXEVENTS, sizeof(event));
-        if(events == NULL) {
-            error("calloc");
-            goto exit;
-        }
+        if(calloc(MAXEVENTS, sizeof(event)) == NULL)
+            return -1;
 
         /* Event loop */
         while(1) {
-            /* Wait for an event */
-            nfds = epoll_wait(fd_epoll, events, MAXEVENTS, -1);
-            if(nfds == -1) {
-                perror("epoll_wait");
-                goto exit;
+            if(event_wait(&event, &event_fd, &event_type) == -1) {
+                /* TODO: Handle EINTR */
+                return -1;
             }
 
-            /* Handle all events */
-            for(i = 0; i < nfds; i++) {
-                if ((events[i].events & EPOLLERR)||
-                    (events[i].events & EPOLLHUP) ||
-                    (!(events[i].events & EPOLLIN))) {
-
-                        close (events[i].data.fd);
-                        continue;
-                }
-                else if(listener_fd == events[i].data.fd) {
+            /* Handle the event */
+            if (!event_type) {
+                /* No events. We should never get here in the first place */ 
+                continue;                
+            }
+            if (event_type & EVENTERR) {
+                /* An error has occured */
+                /* TODO: Notify the caller */
+                event_remove_fd(&event, event_fd);
+                close(event_fd);
+            }
+            if (event_type & EVENTHUP) {
+                /* The connection has been shutdown unexpectedly */
+                /* TODO: Notify the caller */
+                event_remove_fd(&event, event_fd);
+                close(event_fd);
+            }
+            if (event_type & EVENTRDHUP) {
+                /* The client has closed the connection */
+                /* TODO: Notify the caller */
+                event_remove_fd(&event, event_fd);
+                close(event_fd);
+            }
+            if(event_type & EVENTRD) {
+                if(event_fd == listener_fd) {
                     /* Incoming connection */
                     while(1) {
-                        /* Allocate space for address and port info */
-                        cli_addr = (char *) calloc(INET6_ADDRSTRLEN, sizeof(char));
-                        cli_port = (int *) calloc(1, sizeof(int));
-
                         /* Accept the connection */
-                        cli_fd = tcp_accept(listener_fd, cli_addr, cli_port, SOCK_NONBLOCK);
+                        /* TODO: Notify the caller and request permission
+                           to accept, maybe? */
+                        cli_fd = tcp_accept(listener_fd, cli_addr,
+                                            cli_port, SOCK_NONBLOCK);
+
                         if(cli_fd == -1) {
+#ifdef WIN32
+                            if(WSAGetLastError() == WSAEWOULDBLOCK) {
+#else
                             if(likely((errno == EAGAIN) || (errno == EWOULDBLOCK))) {
+#endif
                                 /* We've processed all incoming connections */
                                 break;
                             }
                             else {
-                                error("accept");
+                                /* accept returned error */
+                                /* TODO: Notify the caller */
                                 break;
                             }
                         }
 
                         /* Add the new fd to the event list */
-                        event.data.fd = cli_fd;
-                        event.events = EPOLLIN | EPOLLET;
-                        status = epoll_ctl(fd_epoll, EPOLL_CTL_ADD, cli_fd, &event);
-                        if(status == -1) {
-                            perror("epoll_ctl");
-                            goto exit;
-                        }
+                        event_add_fd(&event, cli_fd, EVENTRD);
+                        /* TODO: Let the user specify the events they want to
+                           be notified of */
 
                         /* Accepted connection. Call the on_accept handler */
                         if(on_accept != NULL) {
                             (*on_accept)(cli_fd, cli_addr, cli_port);
                         }
-
-                        /* Free the resources */
-                        free(cli_addr);
-                        free(cli_port);
                     }
-                    continue;
                 }
                 else {
                     /* Data available for read */
-                    status = (*read_handler)(events[i].data.fd);
-                    if(status) {
-                        /* Handler requested the connection to be closed. Close the socket. */
-                        close(events[i].data.fd);
+                    if((*read_handler)(event_fd)) {
+                        /* Handler requested the connection to be closed. */
 
-                        /* Remove the fd from the fd set */
-                        struct epoll_event ev_tmp; /* This one is ignored by epoll_ctl. The whole
-purpose of its existence is compatibility with
-Linux kernel versions before 2.6.9 */
-
-                        /* TODO: epoll_ctl seems to be expensive. Remove and profile */
-                        epoll_ctl(fd_epoll, EPOLL_CTL_DEL, events[i].data.fd, &ev_tmp);
+                        /* Remove the fd from the event list */
+                        /* TODO: Removal might be expensive on some event
+                           notification mechanisms. Don't remove the fd if
+                           keeping it will be less expensive. */
+                        event_remove_fd(&event, event_fd);
+                        close(event_fd);
                     }
                 }
             }
         }
 
-exit:
-        /* Free the resources */
-        shutdown(listener_fd, SHUT_RDWR);
-        close(listener_fd);
-
-        close(fd_epoll);
-        free(events);
-
-        return -1;
-}
-
-#else
-
-int tcp_server(char *hostname, char *port,
-    int (*read_handler)(int),
-    void(*on_accept)(int, char *, int *)) {
-
-        int listener_fd, cli_fd, i, status, fdmax;
-        char *cli_addr;
-        int *cli_port;
-
-        /* fd sets for select() */
-        fd_set fds_master, fds_read;
-
-        /* We must have a read handler */
-        if(read_handler == NULL) {
-            error("No read handler");
+        /* Close the listener socket */
+        if(shutdown(listener_fd, SHUT_RDWR) == -1)
             return -1;
-        }
 
-#ifdef WIN32
-        WSAData wsaData;
+        if(close(listener_fd) == -1)
+            return -1;
 
-        if(WSAStartup(MAKEWORD(2,2), &wsaData) != 0) {
-            perror("WSAStartup failed.");
-            goto exit;
-        }
-#endif
+        /* Deinitialize the event mechanism */
+        if(event_free(&event) == -1)
+            return -1;
 
-        /* Create a listener socket */
-        listener_fd = tcp_create_listener(hostname, port);
-        if(listener_fd == -1) {
-            error("Could not create a listener socket");
-            goto exit;
-        }
-
-        /* The listener must not block */
-        status = setnoblock(listener_fd);
-        if(status == -1) {
-            error("setnoblock");
-            goto exit;
-        }
-
-        /* Initialize the fd sets */
-        FD_ZERO(&fds_master);
-        FD_ZERO(&fds_read);
-
-        /* Add the listener fd to the master set */
-        FD_SET(listener_fd, &fds_master);
-        fdmax = listener_fd;
-
-        /* Event loop */
-        while(1) {
-            /* Update fds_read */
-            fds_read = fds_master;
-
-            /* Wait for an event */
-            status = select(fdmax + 1, &fds_read, NULL, NULL, NULL);
-            if(status == -1) {
-                perror("select");
-                goto exit;
-            }
-
-            /* Handle all events */
-            for(i = 0; i <= fdmax; i++) {
-                if(FD_ISSET(i, &fds_read)) {
-                    if(i == listener_fd) {
-                        /* Incoming connection */
-                        while(1) {
-                            /* Allocate space for address and port info */
-                            cli_addr = (char *) calloc(INET6_ADDRSTRLEN, sizeof(char));
-                            cli_port = (int *) calloc(1, sizeof(int));
-
-                            /* Accept the connection */
-                            cli_fd = tcp_accept(listener_fd, cli_addr, cli_port, SOCK_NONBLOCK);
-                            if(cli_fd == -1) {
-#ifdef WIN32
-                                if(WSAGetLastError() == WSAEWOULDBLOCK) {
-#else
-                                if(likely((errno == EAGAIN) || (errno == EWOULDBLOCK))) {
-#endif
-                                    /* We've processed all incoming connections */
-                                    break;
-                                }
-                                else {
-                                    error("accept");
-                                    break;
-                                }
-                            }
-
-                            /* Add the new fd to the fd set */
-                            FD_SET(cli_fd, &fds_master);
-
-                            /* Update fdmax */
-                            if(cli_fd > fdmax)
-                                fdmax = cli_fd;
-
-                            /* Accepted connection. Call the on_accept handler */
-                            if(on_accept != NULL) {
-                                (*on_accept)(cli_fd, cli_addr, cli_port);
-                            }
-
-                            /* Free the resources */
-                            free(cli_addr);
-                            free(cli_port);
-                        }
-                        continue;
-                    }
-                    else {
-                        /* Data available for read */
-                        status = (*read_handler)(i);
-                        if(status) {
-                            /* Handler requested the connection to be closed. Close the socket */
-                            close(i);
-
-                            /* Remove the fd from the fd set */
-                            FD_CLR(i, &fds_master);
-                        }
-                    }
-                }
-            }
-        }
-
-exit:
-        /* Free the resources */
-        shutdown(listener_fd, SHUT_RDWR);
-        close(listener_fd);
-#ifdef WIN32
-        WSACleanup();
-#endif
-        return -1;
+        return 0; /* Terminated succesfully */
 }
-#endif
+
