@@ -175,7 +175,7 @@ Instead we use SO_EXCLUSIVEADDRUSE */
     return fd;
 }
 
-int tcp_connect(char *hostname, char *port) {
+int srv_connect(char *hostname, char *port) {
     int status, fd;
     struct addrinfo hints;
     struct addrinfo *servinfo;
@@ -203,7 +203,9 @@ int tcp_connect(char *hostname, char *port) {
     return fd;
 }
 
-int tcp_close(int fd) {
+int srv_closeconn(int fd) {
+    /* TODO: Remove from event mechanism */
+    /* TODO: shutdown? */
     return close(fd);
 }
 
@@ -248,13 +250,13 @@ static int tcp_accept(int fd, char *ip, int *port, int flags) {
     }
 }
 
-/* TODO: Inline and profile */
-int tcp_read(int fd, char *buf, int size) {
+int srv_read(int fd, char *buf, int size) {
+    /* TODO: Implementation */
+    return 0;
+}
+
+int srv_readall(int fd, char *buf, int size) {
     /* TODO: Handle EINTR */
-    /* TODO: Busy-waiting until the specified size is read is not a good idea,
-       considering huge data and/or slow connections. Add a 'noblock' argument
-       that will let the function return in case EAGAIN/EWOULDBLOCK is set after
-       read() */
     int nread, total_read = 0;
 
     /* Make sure 'size' bytes are read */
@@ -270,10 +272,13 @@ int tcp_read(int fd, char *buf, int size) {
     return total_read;
 }
 
-/* TODO: Inline and profile */
-int tcp_write(int fd, char *buf, int size) {
+int srv_write(int fd, char *buf, int size) {
+    /* TODO: Implementation */
+    return 0;
+}
+
+int srv_writeall(int fd, char *buf, int size) {
     /* TODO: Handle EINTR */
-    /* TODO: Add a 'noblock' argument for the same reasons as in tcp_read() */
     int nwritten, total_written = 0;
 
     /* Make sure 'size' bytes are written */
@@ -502,14 +507,42 @@ static inline int event_free(event_t *ev) {
 #endif
 
 
-int tcp_server(char *hostname, char *port,
-    int (*read_handler)(int),
-    void(*on_accept)(int, char *, int *)) {
+int srv_init(srv_t *ctx) {
+    if(!ctx) {
+        errno = EINVAL;
+        return -1;
+    }
+       
+    /* Set default values for the options */
+    ctx->backlog = 1;
+    ctx->maxevents = 1000; /* Good enough? */
+    ctx->szreadbuf  = 512;
+    ctx->szwritebuf = 512;
 
+    /* Initialize handler pointers to 0 */
+    ctx->hnd_accept = 0;
+    ctx->hnd_read   = 0;
+    ctx->hnd_write  = 0;
+    ctx->hnd_hup    = 0;
+    ctx->hnd_rdhup  = 0;
+    ctx->hnd_error  = 0;
+
+    /* By default, only read events are reported for new fds */
+    ctx->newfd_event_flags = EVENTRD;
+
+    return 0;
+}
+
+int srv_run(srv_t *ctx, char *hostname, char *port) {
         event_t ev;
 
-        int listener_fd, cli_fd, event_fd, event_type, *cli_port;
+        int event_fd, cli_fd, event_type, *cli_port;
         char *cli_addr;
+
+        if(!ctx) {
+            errno = EINVAL;
+            return -1;
+        }
 
         cli_addr = (char *)calloc(INET6_ADDRSTRLEN, sizeof(char));
         cli_port = (int  *)calloc(1, sizeof(int));
@@ -524,25 +557,25 @@ int tcp_server(char *hostname, char *port,
 #endif
 
         /* We must have a read handler */
-        if(read_handler == NULL) {
+        if(ctx->hnd_read == NULL) {
             errno = EINVAL; /* Invalid argument */
             return -1;
         }
 
         /* Create a listener socket */
-        if((listener_fd = tcp_create_listener(hostname, port)) == -1)
+        if((ctx->fdlistener = tcp_create_listener(hostname, port)) == -1)
             return -1;
 
         /* The listener must not block */
-        if(setnoblock(listener_fd) == -1)
+        if(setnoblock(ctx->fdlistener) == -1)
             return -1;
 
         /* Initialize the event notification mechanism */
-        if(event_init(&ev, MAXEVENTS) == -1)
+        if(event_init(&ev, ctx->maxevents) == -1)
             return -1;
 
         /* Request read event notifications for the listener */
-        if(event_add_fd(&ev, listener_fd, EVENTRD) == -1)
+        if(event_add_fd(&ev, ctx->fdlistener, EVENTRD) == -1)
             return -1;
 
         /* Event loop */
@@ -559,29 +592,41 @@ int tcp_server(char *hostname, char *port,
             }
             if (event_type & EVENTERR) {
                 /* An error has occured */
-                /* TODO: Notify the caller */
+
+                /* Notify the caller */
+                if(ctx->hnd_error)
+                    (*(ctx->hnd_error))(event_fd, 0); /* TODO: Return the proper error no */
+
                 event_remove_fd(&ev, event_fd);
                 close(event_fd);
             }
             if (event_type & EVENTHUP) {
                 /* The connection has been shutdown unexpectedly */
-                /* TODO: Notify the caller */
+
+                /* Notify the caller */
+                if(ctx->hnd_hup)
+                    (*(ctx->hnd_hup))(event_fd);
+
                 event_remove_fd(&ev, event_fd);
                 close(event_fd);
             }
             if (event_type & EVENTRDHUP) {
                 /* The client has closed the connection */
-                /* TODO: Notify the caller */
+
+                /* Notify the caller */
+                if(ctx->hnd_rdhup)
+                    (*(ctx->hnd_rdhup))(event_fd);                
+
                 event_remove_fd(&ev, event_fd);
                 close(event_fd);
             }
             if(event_type & EVENTRD) {
-                if(event_fd == listener_fd) {
+                if(event_fd == ctx->fdlistener) {
                     /* Incoming connection */
                     while(1) {
                         /* Accept the connection */
                         /* TODO: Notify the caller and request permission to accept, maybe? */
-                        cli_fd = tcp_accept(listener_fd, cli_addr,
+                        cli_fd = tcp_accept(ctx->fdlistener, cli_addr,
                                             cli_port, SOCK_NONBLOCK);
 
                         if(cli_fd == -1) {
@@ -595,24 +640,24 @@ int tcp_server(char *hostname, char *port,
                             }
                             else {
                                 /* accept returned error */
-                                /* TODO: Notify the caller */
+                                if(ctx->hnd_error)
+                                    ((*ctx->hnd_error))(cli_fd, SRV_EACCEPT);
                                 break;
                             }
                         }
 
                         /* Add the new fd to the event list */
-                        event_add_fd(&ev, cli_fd, EVENTRD);
-                        /* TODO: Let the user specify the events they want to be notified of */
+                        event_add_fd(&ev, cli_fd, ctx->newfd_event_flags); /* TODO: Error handling */
 
                         /* Accepted connection. Call the on_accept handler */
-                        if(on_accept != NULL) {
-                            (*on_accept)(cli_fd, cli_addr, cli_port);
+                        if(ctx->hnd_accept != NULL) {
+                            (*(ctx->hnd_accept))(cli_fd, cli_addr, *cli_port);
                         }
                     }
                 }
                 else {
                     /* Data available for read */
-                    if((*read_handler)(event_fd)) {
+                    if((*(ctx->hnd_read))(event_fd)) {
                         /* Handler requested the connection to be closed. */
 
                         /* Remove the fd from the event list */
@@ -632,10 +677,10 @@ int tcp_server(char *hostname, char *port,
             free(cli_port);
 
         /* Close the listener socket */
-        if(shutdown(listener_fd, SHUT_RDWR) == -1)
+        if(shutdown(ctx->fdlistener, SHUT_RDWR) == -1)
             return -1;
 
-        if(close(listener_fd) == -1)
+        if(close(ctx->fdlistener) == -1)
             return -1;
 
         /* Deinitialize the event mechanism */
@@ -645,3 +690,103 @@ int tcp_server(char *hostname, char *port,
         return 0; /* Terminated succesfully */
 }
 
+int srv_hnd_read(srv_t *ctx, int (*h)(int)) {
+    if(!ctx) {
+        errno = EINVAL;
+        return -1;
+    }
+    
+    ctx->hnd_read = h;
+}
+
+int srv_hnd_write(srv_t *ctx, int (*h)(int)) {
+    if(!ctx) {
+        errno = EINVAL;
+        return -1;
+    }
+    
+    ctx->hnd_write = h;
+}
+
+int srv_hnd_accept(srv_t *ctx, int (*h)(int, char *, int)) {
+    if(!ctx) {
+        errno = EINVAL;
+        return -1;
+    }
+    
+    ctx->hnd_accept = h;
+}
+
+int srv_hnd_hup(srv_t *ctx, int (*h)(int)) {
+    if(!ctx) {
+        errno = EINVAL;
+        return -1;
+    }
+    
+    ctx->hnd_hup = h;
+}
+
+int srv_hnd_rdhup(srv_t *ctx, int (*h)(int)) {
+    if(!ctx) {
+        errno = EINVAL;
+        return -1;
+    }
+    
+    ctx->hnd_rdhup = h;
+}
+
+int srv_hnd_error(srv_t *ctx, int (*h)(int, int)) {
+    if(!ctx) {
+        errno = EINVAL;
+        return -1;
+    }
+    
+    ctx->hnd_error = h;
+}
+
+int srv_set_backlog(srv_t *ctx, int backlog) {
+    if(!ctx) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    ctx->backlog = backlog;
+}
+
+int srv_set_maxevents(srv_t *ctx, int n) {
+    if(!ctx) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    ctx->maxevents = n;
+}
+
+int srv_notify_read(srv_t *ctx, int fd, int yes) {
+    /* TODO: Implementation */
+    return 0;
+}
+
+int srv_notify_write(srv_t *ctx, int fd, int yes) {
+    /* TODO: Implementation */
+    return 0;
+}
+
+int srv_newfd_notify_read(srv_t *ctx, int yes) {
+    /* TODO: Implementation */
+    return 0;
+}
+
+int srv_newfd_notify_write(srv_t *ctx, int yes) {
+    /* TODO: Implementation */
+    return 0;
+}
+
+int srv_get_listenerfd(srv_t *ctx) {
+    if(!ctx) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    return ctx->fdlistener;
+}

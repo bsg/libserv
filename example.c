@@ -14,27 +14,39 @@ int read_handler(int fd) {
     int nread;
 
     /* Read data from the client */
-    nread = tcp_read(fd, buffer, 255);
+    nread = srv_readall(fd, buffer, 255);
     buffer[nread] = '\0';
 
     /* Echo the data back to the client */
-    tcp_write(fd, buffer, nread);
+    srv_writeall(fd, buffer, nread);
 
     /* Return 1 to close the connection, 0 to keep it alive */
     return 1;
 }
 
-/* On accept handler is called whenever a new connection is made to
-   the server */
-void on_accept(int fd, char *addr, int *port) {
-    printf("Incoming connection from %s:%d\n", addr, *port);
+/* Accept handler is called whenever a new connection is accepted
+   by the server */
+int accept_handler(int fd, char *addr, int port) {
+    printf("Incoming connection from %s:%d\n", addr, port);
 }
 
 int main(void) {
+    srv_t srv;
+
+    /* Initialize the server */
+    if(srv_init(&srv) == -1)
+        perror("srv_init");
+
+    /* Set read handler */
+    srv_hnd_read(&srv, read_handler);
+    
+    /* Set write handler */
+    srv_hnd_accept(&srv, accept_handler);
+
     /* Initialize and start the server */
-    if(tcp_server(NULL, "9999", &read_handler, &on_accept) == -1) {
-        perror("tcp_server");
-    }
+    if(srv_run(&srv, NULL, "9999") == -1)
+        perror("srv_run");
+
     /* Yep, that's all */
 
     return 0;

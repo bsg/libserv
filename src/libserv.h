@@ -23,11 +23,52 @@
 #ifndef _LIBSERV_H
 #define _LIBSERV_H
 
-int tcp_server(char *, char *, int(*)(int), void(*)(int, char *, int *));
-int tcp_read(int, char *, int);
-int tcp_write(int, char *, int);
+#define SRV_EACCEPT   0x1
+#define SRV_ESOCKET   0x2
+#define SRV_ENOBLOCK  0x3
+#define SRV_EEVINIT   0x4
+#define SRV_EEVADD    0x5
+#define SRV_ECLOSE    0x6
+#define SRV_ESHUT     0x7
 
-int tcp_connect(char *, char *);
-int tcp_close(int);
+typedef struct {
+    int fdlistener, maxevents, backlog;
+    int szreadbuf, szwritebuf;
+    unsigned int newfd_event_flags;
+
+    int (*hnd_read)(int);
+    int (*hnd_write)(int);
+    int (*hnd_accept)(int, char *, int);
+    int (*hnd_hup)(int);
+    int (*hnd_rdhup)(int);
+    int (*hnd_error)(int, int); 
+} srv_t;
+
+int srv_init(srv_t *);
+
+int srv_start(srv_t *, char *, char *);
+int srv_read(int, char *, int);
+int srv_write(int, char *, int);
+
+int srv_connect(char *, char *);
+int srv_closeconn(int);
+
+int srv_set_backlog(srv_t *, int);
+int srv_set_maxevents(srv_t *, int);
+
+int srv_notify_read(srv_t *, int, int);
+int srv_notify_write(srv_t *, int, int);
+
+int srv_newfd_notify_read(srv_t *, int);
+int srv_newfd_notify_write(srv_t *, int);
+
+int srv_hnd_read(srv_t *, int (*)(int));
+int srv_hnd_write(srv_t *, int (*)(int));
+int srv_hnd_accept(srv_t *, int (*)(int, char *, int));
+int srv_hnd_hup(srv_t *, int (*)(int));
+int srv_hnd_rdhup(srv_t *, int (*)(int));
+int srv_hnd_error(srv_t *, int (*)(int, int));
+
+int srv_get_listenerfd(srv_t *);
 
 #endif
