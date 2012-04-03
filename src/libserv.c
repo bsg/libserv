@@ -536,16 +536,15 @@ int srv_init(srv_t *ctx) {
 int srv_run(srv_t *ctx, char *hostname, char *port) {
         event_t ev;
 
-        int event_fd, cli_fd, event_type, *cli_port;
-        char *cli_addr;
+        int event_fd, cli_fd, event_type;
+
+        int  cli_port;
+        char cli_addr[INET6_ADDRSTRLEN];
 
         if(!ctx) {
             errno = EINVAL;
             return -1;
         }
-
-        cli_addr = (char *)calloc(INET6_ADDRSTRLEN, sizeof(char));
-        cli_port = (int  *)calloc(1, sizeof(int));
 
 #ifdef WIN32
         WSAData wsaData;
@@ -626,8 +625,8 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
                     while(1) {
                         /* Accept the connection */
                         /* TODO: Notify the caller and request permission to accept, maybe? */
-                        cli_fd = tcp_accept(ctx->fdlistener, cli_addr,
-                                            cli_port, SOCK_NONBLOCK);
+                        cli_fd = tcp_accept(ctx->fdlistener, (char *)&cli_addr,
+                                            (int *)&cli_port, SOCK_NONBLOCK);
 
                         if(cli_fd == -1) {
 #ifdef WIN32
@@ -651,7 +650,7 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
 
                         /* Accepted connection. Call the on_accept handler */
                         if(ctx->hnd_accept != NULL) {
-                            (*(ctx->hnd_accept))(cli_fd, cli_addr, *cli_port);
+                            (*(ctx->hnd_accept))(cli_fd, cli_addr, cli_port);
                         }
                     }
                 }
@@ -669,12 +668,6 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
                 }
             }
         }
-
-        if(cli_addr)
-            free(cli_addr);
-
-        if(cli_port)
-            free(cli_port);
 
         /* Close the listener socket */
         if(shutdown(ctx->fdlistener, SHUT_RDWR) == -1)
