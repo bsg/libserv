@@ -26,6 +26,7 @@ SOFTWARE.
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/types.h>
+#include <stdint.h>
 
 #include "libserv.h"
 
@@ -62,7 +63,7 @@ static inline int write(int fd, char *buffer, int size) {
         #define EPOLL
     #else
     /* TODO: Check if poll, kqueue or IOCP is avalable.
-       If not, fallback to select */
+If not, fallback to select */
         #define SELECT
     #endif
 #endif
@@ -73,12 +74,16 @@ static inline int write(int fd, char *buffer, int size) {
 #endif
 
 #ifdef EPOLL
-#include <sys/epoll.h>
+    #include <sys/epoll.h>
 #else
-#define FD_SETSIZE FOPEN_MAX
-#ifdef __linux__
-#include <sys/select.h>
-#endif
+    #ifdef WIN32
+        #define FD_SETSIZE 10000 /* TODO: Find the max # of open sockets instead of a hardcoded value */
+    #else
+        #define FD_SETSIZE FOPEN_MAX
+    #endif
+    #ifdef __linux__
+        #include <sys/select.h>
+    #endif
 #endif
 
 #ifndef INET6_ADDRSTRLEN
@@ -102,7 +107,7 @@ static inline int write(int fd, char *buffer, int size) {
 #endif
 
 #define LISTEN_BACKLOG 5 /* TODO: This one should be a variable that the user is
-                            allowed to specify */
+allowed to specify */
 
 static int setnoblock(int fd) {
 #ifndef WIN32
@@ -149,7 +154,7 @@ static int tcp_create_listener(char *hostname, char *port) {
     /* Make the socket available for reuse immediately after it's closed */
 #ifdef WIN32
     /* NOTE: It turns out Win32 definition of SO_REUSEADDR is not the same as the POSIX definition.
-       Instead we use SO_EXCLUSIVEADDRUSE */
+Instead we use SO_EXCLUSIVEADDRUSE */
     status = setsockopt(fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, &reuse_addr, sizeof(reuse_addr));
 #else
     status = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse_addr, sizeof(reuse_addr));
@@ -288,113 +293,113 @@ int tcp_write(int fd, char *buf, int size) {
 
 #ifdef EPOLL
 
-#define EVENTRD    EPOLLIN
-#define EVENTWR    EPOLLOUT
-#define EVENTHUP   EPOLLHUP
+#define EVENTRD EPOLLIN
+#define EVENTWR EPOLLOUT
+#define EVENTHUP EPOLLHUP
 #define EVENTRDHUP EPOLLRDHUP
-#define EVENTERR   EPOLLERR
+#define EVENTERR EPOLLERR
 
 typedef struct {
     struct epoll_event *events;
-    int    epfd, nfds, fd_index, max_events;
+    int epfd, nfds, fd_index, max_events;
 } event_t;
 
-static inline int event_init(event_t *event, int max_events) {
-    event->epfd = epoll_create1(0);
-    event->nfds = 0;
-    event->fd_index = 0;
-    event->max_events = max_events;
+static inline int event_init(event_t *ev, int max_events) {
+    ev->epfd = epoll_create1(0);
+    ev->nfds = 0;
+    ev->fd_index = 0;
+    ev->max_events = max_events;
 
-    event->events = calloc(max_events, sizeof(struct epoll_event));
-    if(event->events == NULL)
+    ev->events = calloc(max_events, sizeof(struct epoll_event));
+    if(ev->events == NULL)
         return -1;
 
-    return event->epfd;        
+    return ev->epfd;
 }
 
-static inline int event_add_fd(event_t *event, int fd, uint32_t flags) {
+static inline int event_add_fd(event_t *ev, int fd, uint32_t flags) {
         struct epoll_event tmp_event;
 
         tmp_event.data.fd = fd;
         tmp_event.events = flags | EPOLLET; /* Use the edge-triggered mode */
 
-        return epoll_ctl(event->epfd, EPOLL_CTL_ADD, fd, &tmp_event);
+        return epoll_ctl(ev->epfd, EPOLL_CTL_ADD, fd, &tmp_event);
 }
 
-static inline int event_remove_fd(event_t *event, int fd) {
+static inline int event_remove_fd(event_t *ev, int fd) {
     struct epoll_event tmp_event; /* Required for linux versions before 2.6.9 */
 
-    return epoll_ctl(event->epfd, EPOLL_CTL_DEL, fd, &tmp_event);
+    return epoll_ctl(ev->epfd, EPOLL_CTL_DEL, fd, &tmp_event);
 }
 
-static inline int event_wait(event_t *event, int *event_fd, int *event_type) {
-    if(event->nfds == 0) {
+static inline int event_wait(event_t *ev, int *event_fd, int *event_type) {
+    if(ev->nfds == 0) {
         /* All events processed so far. Wait for new events */
-        event->fd_index = 0;
-        event->nfds = epoll_wait(event->epfd, event->events, event->max_events, -1);
+        ev->fd_index = 0;
+        ev->nfds = epoll_wait(ev->epfd, ev->events, ev->max_events, -1);
     }
 
     /* Preserve the errno and notify the caller that an error has occured */
-    if(event->nfds <= 0) {
+    if(ev->nfds <= 0) {
         /* Error occured or there are no events waiting to be handled */
         *event_type = 0;
-        return event->nfds; /* Return value is -1 on error */
+        return ev->nfds; /* Return value is -1 on error */
     }
 
     /* Pass the next event to the caller */
-    *event_type = event->events[event->fd_index].events;
-    *event_fd   = event->events[event->fd_index].data.fd;
+    *event_type = ev->events[ev->fd_index].events;
+    *event_fd = ev->events[ev->fd_index].data.fd;
 
     /* Point to the next event to be handled */
-    if(event->fd_index < event->nfds)
-        event->fd_index++;
+    if(ev->fd_index < ev->nfds)
+        ev->fd_index++;
     else {
-        event->nfds = 0;
+        ev->nfds = 0;
         *event_type = 0;
         return 0; /* All events have been handled */
     }
     
     /* Return the number of events waiting to be handled */
-    return (event->nfds - event->fd_index);
+    return (ev->nfds - ev->fd_index);
 }
 
-static inline int event_free(event_t *event) {
-    free(event->events);
+static inline int event_free(event_t *ev) {
+    free(ev->events);
     
-    if(close(event->epfd) == -1)
+    if(close(ev->epfd) == -1)
         return -1;
 }
 #endif
 
 #ifdef SELECT
 
-#define EVENTRD     1
-#define EVENTWR     2
-#define EVENTHUP    4
-#define EVENTRDHUP  8
-#define EVENTERR   16
+#define EVENTRD 1
+#define EVENTWR 2
+#define EVENTHUP 4
+#define EVENTRDHUP 8
+#define EVENTERR 16
 
 typedef struct {
     fd_set fds_read_master, fds_read, fds_write_master, fds_write;
     int fdmax, nfds, fd_index;
 } event_t;
 
-static inline int event_init(event_t *event, int max_events) {
+static inline int event_init(event_t *ev, int max_events) {
     /* Initialize the fd sets */
-    FD_ZERO(&(event->fds_read_master));
-    FD_ZERO(&(event->fds_read));
+    FD_ZERO(&(ev->fds_read_master));
+    FD_ZERO(&(ev->fds_read));
 
-    FD_ZERO(&(event->fds_write_master));
-    FD_ZERO(&(event->fds_write));
+    FD_ZERO(&(ev->fds_write_master));
+    FD_ZERO(&(ev->fds_write));
 
-    event->fdmax = 0;
-    event->nfds  = 0;
-    event->fd_index  = 0;
+    ev->fdmax = 0;
+    ev->nfds = 0;
+    ev->fd_index = 0;
 
     return 0;
 }
 
-static inline int event_add_fd(event_t *event, int fd, uint32_t flags) {
+static inline int event_add_fd(event_t *ev, int fd, uint32_t flags) {
     if(fd >= FD_SETSIZE) {
         errno = EBUSY; /* fd set is full */
         return -1;
@@ -402,60 +407,60 @@ static inline int event_add_fd(event_t *event, int fd, uint32_t flags) {
 
     if(flags & EVENTRD) {
         /* Add the fd to the read fd_set */
-        FD_SET(fd, &(event->fds_read_master));
+        FD_SET(fd, &(ev->fds_read_master));
     }
 
     if(flags & EVENTWR) {
         /* Add the fd to the write fd_set */
-        FD_SET(fd, &(event->fds_write_master));
+        FD_SET(fd, &(ev->fds_write_master));
     }
 
     /* Update fdmax */
-    if(fd > event->fdmax)
-        event->fdmax = fd;
+    if(fd > ev->fdmax)
+        ev->fdmax = fd;
 
     return 0;
 }
 
-static inline int event_remove_fd(event_t *event, int fd) {
+static inline int event_remove_fd(event_t *ev, int fd) {
     /* Remove from all fd sets */
-    FD_CLR(fd, &(event->fds_read_master));
-    FD_CLR(fd, &(event->fds_write_master));
-    FD_CLR(fd, &(event->fds_read));
-    FD_CLR(fd, &(event->fds_write));
+    FD_CLR(fd, &(ev->fds_read_master));
+    FD_CLR(fd, &(ev->fds_write_master));
+    FD_CLR(fd, &(ev->fds_read));
+    FD_CLR(fd, &(ev->fds_write));
 
     /* Update fdmax */
-    if(fd == event->fdmax) {
-        event->fdmax--;
+    if(fd == ev->fdmax) {
+        ev->fdmax--;
 
         /* The fd that is being handled has just been removed. All the previous
-           fds have already been handled */
-        if(fd == event->fd_index)
-            event->nfds = 0;
+fds have already been handled */
+        if(fd == ev->fd_index)
+            ev->nfds = 0;
     }
 
     return 0;
 }
 
-static inline int event_wait(event_t *event, int *event_fd, int *event_type) {
-    if(event->nfds == 0) {
+static inline int event_wait(event_t *ev, int *event_fd, int *event_type) {
+    if(ev->nfds == 0) {
         /* All events processed so far. Wait for new events */
-        event->fds_read = event->fds_read_master;
-        event->fds_write = event->fds_write_master;
-        event->fd_index = 0;
+        ev->fds_read = ev->fds_read_master;
+        ev->fds_write = ev->fds_write_master;
+        ev->fd_index = 0;
 
-        event->nfds = select(event->fdmax + 1, &(event->fds_read),
-                            &(event->fds_write), NULL, NULL);
+        ev->nfds = select(ev->fdmax + 1, &(ev->fds_read),
+                          &(ev->fds_write), NULL, NULL);
     }
     
-    if(event->nfds == -1) {
+    if(ev->nfds == -1) {
         /* An error occured */
         *event_type = EVENTERR;
-        event->nfds = 0;
+        ev->nfds = 0;
 
         return -1;
     }
-    else if(event->nfds == 0) {
+    else if(ev->nfds == 0) {
         /* No events waiting to be processed */
         *event_type = 0;
         
@@ -463,21 +468,21 @@ static inline int event_wait(event_t *event, int *event_fd, int *event_type) {
     }
 
     /* Find the next ready fd */
-    for(;(event->fd_index <= event->fdmax) && (event->nfds > 0); event->fd_index++) {
+    for(;(ev->fd_index <= ev->fdmax) && (ev->nfds > 0); ev->fd_index++) {
         *event_type = 0;
-        if(FD_ISSET(event->fd_index, &(event->fds_read))) {
+        if(FD_ISSET(ev->fd_index, &(ev->fds_read))) {
             /* fd ready for read */
-            *event_fd   = event->fd_index;
+            *event_fd = ev->fd_index;
             *event_type |= EVENTRD;
-            event->nfds--;
-            FD_CLR(event->fd_index, &(event->fds_read));
+            ev->nfds--;
+            FD_CLR(ev->fd_index, &(ev->fds_read));
         }
 
-        if(FD_ISSET(event->fd_index, &(event->fds_write))) {
+        if(FD_ISSET(ev->fd_index, &(ev->fds_write))) {
             /* fd ready for write */
-            *event_fd   = event->fd_index;
+            *event_fd = ev->fd_index;
             *event_type |= EVENTWR;
-            event->nfds--;
+            ev->nfds--;
         }
 
         if(*event_type) {
@@ -486,13 +491,13 @@ static inline int event_wait(event_t *event, int *event_fd, int *event_type) {
         }
     }
 
-    return event->nfds;
+    return ev->nfds;
 }
 
-static inline int event_free(event_t *event) {
+static inline int event_free(event_t *ev) {
     /* Nothing to free */
     return 0;
-} 
+}
 
 #endif
 
@@ -501,13 +506,22 @@ int tcp_server(char *hostname, char *port,
     int (*read_handler)(int),
     void(*on_accept)(int, char *, int *)) {
 
-        event_t event;
+        event_t ev;
 
         int listener_fd, cli_fd, event_fd, event_type, *cli_port;
         char *cli_addr;
 
-        cli_addr = calloc(INET6_ADDRSTRLEN, sizeof(char));
-        cli_port = calloc(1, sizeof(int));
+        cli_addr = (char *)calloc(INET6_ADDRSTRLEN, sizeof(char));
+        cli_port = (int  *)calloc(1, sizeof(int));
+
+#ifdef WIN32
+        WSAData wsaData;
+
+        if(WSAStartup(MAKEWORD(2,2), &wsaData) != 0) {
+            /* TODO: Set errno */
+            return -1;
+        }
+#endif
 
         /* We must have a read handler */
         if(read_handler == NULL) {
@@ -524,44 +538,41 @@ int tcp_server(char *hostname, char *port,
             return -1;
 
         /* Initialize the event notification mechanism */
-        if(event_init(&event, MAXEVENTS) == -1)
+        if(event_init(&ev, MAXEVENTS) == -1)
             return -1;
 
         /* Request read event notifications for the listener */
-        if(event_add_fd(&event, listener_fd, EVENTRD) == -1)
-            return -1;
-
-        if(calloc(MAXEVENTS, sizeof(event)) == NULL)
+        if(event_add_fd(&ev, listener_fd, EVENTRD) == -1)
             return -1;
 
         /* Event loop */
         while(1) {
-            if(event_wait(&event, &event_fd, &event_type) == -1) {
+            if(event_wait(&ev, &event_fd, &event_type) == -1) {
                 /* TODO: Handle EINTR */
                 return -1;
             }
 
             /* Handle the event */
             if (!event_type) {
-                /* No events. We should never get here in the first place */ 
-                continue;                
+                /* No events. We should never get here in the first place */
+                continue;
             }
             if (event_type & EVENTERR) {
                 /* An error has occured */
                 /* TODO: Notify the caller */
-                event_remove_fd(&event, event_fd);
+                event_remove_fd(&ev, event_fd);
                 close(event_fd);
             }
             if (event_type & EVENTHUP) {
                 /* The connection has been shutdown unexpectedly */
                 /* TODO: Notify the caller */
-                event_remove_fd(&event, event_fd);
+                event_remove_fd(&ev, event_fd);
                 close(event_fd);
             }
             if (event_type & EVENTRDHUP) {
                 /* The client has closed the connection */
                 /* TODO: Notify the caller */
-                event_remove_fd(&event, event_fd);
+                event_remove_fd(&ev, event_fd);
                 close(event_fd);
             }
             if(event_type & EVENTRD) {
@@ -569,8 +580,7 @@ int tcp_server(char *hostname, char *port,
                     /* Incoming connection */
                     while(1) {
                         /* Accept the connection */
-                        /* TODO: Notify the caller and request permission
-                           to accept, maybe? */
+                        /* TODO: Notify the caller and request permission to accept, maybe? */
                         cli_fd = tcp_accept(listener_fd, cli_addr,
                                             cli_port, SOCK_NONBLOCK);
 
@@ -591,9 +601,8 @@ int tcp_server(char *hostname, char *port,
                         }
 
                         /* Add the new fd to the event list */
-                        event_add_fd(&event, cli_fd, EVENTRD);
-                        /* TODO: Let the user specify the events they want to
-                           be notified of */
+                        event_add_fd(&ev, cli_fd, EVENTRD);
+                        /* TODO: Let the user specify the events they want to be notified of */
 
                         /* Accepted connection. Call the on_accept handler */
                         if(on_accept != NULL) {
@@ -607,15 +616,20 @@ int tcp_server(char *hostname, char *port,
                         /* Handler requested the connection to be closed. */
 
                         /* Remove the fd from the event list */
-                        /* TODO: Removal might be expensive on some event
-                           notification mechanisms. Don't remove the fd if
-                           keeping it will be less expensive. */
-                        event_remove_fd(&event, event_fd);
+                        /* TODO: Removal might be expensive on some event notification
+                           mechanisms. Don't remove the fd if keeping it will be less expensive. */
+                        event_remove_fd(&ev, event_fd);
                         close(event_fd);
                     }
                 }
             }
         }
+
+        if(cli_addr)
+            free(cli_addr);
+
+        if(cli_port)
+            free(cli_port);
 
         /* Close the listener socket */
         if(shutdown(listener_fd, SHUT_RDWR) == -1)
@@ -625,7 +639,7 @@ int tcp_server(char *hostname, char *port,
             return -1;
 
         /* Deinitialize the event mechanism */
-        if(event_free(&event) == -1)
+        if(event_free(&ev) == -1)
             return -1;
 
         return 0; /* Terminated succesfully */
