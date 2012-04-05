@@ -41,14 +41,16 @@ typedef struct {
     int (*hnd_accept)(int, char *, int);
     int (*hnd_hup)(int);
     int (*hnd_rdhup)(int);
-    int (*hnd_error)(int, int); 
+    int (*hnd_error)(int, int);
 } srv_t;
 
 int srv_init(srv_t *);
 
-int srv_start(srv_t *, char *, char *);
+int srv_run(srv_t *, char *, char *);
 int srv_read(int, char *, int);
 int srv_write(int, char *, int);
+int srv_readall(int, char *, int);
+int srv_writeall(int, char *, int);
 
 int srv_connect(char *, char *);
 int srv_closeconn(int);

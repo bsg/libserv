@@ -28,6 +28,8 @@ int read_handler(int fd) {
    by the server */
 int accept_handler(int fd, char *addr, int port) {
     printf("Incoming connection from %s:%d\n", addr, port);
+    
+    return 0;
 }
 
 int main(void) {

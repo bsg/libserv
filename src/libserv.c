@@ -38,14 +38,19 @@ SOFTWARE.
 #include <sys/socket.h>
 #endif
 
-#ifdef WIN32
-#include <WinSock2.h>
+#ifdef MSVC
+#define inline _inline
+#else
+#define inline __inline__
+#endif
+
+#ifdef _WIN32
+
+#include <Winsock2.h>
 #include <Ws2tcpip.h>
 
 #define close closesocket
 #define SHUT_RDWR SD_BOTH
-
-typedef int socklen_t;
 
 static inline int read(int fd, char *buffer, int size) {
     return recv(fd, buffer, size, 0);
@@ -66,17 +71,19 @@ static inline int write(int fd, char *buffer, int size) {
 If not, fallback to select */
         #define SELECT
     #endif
-#endif
-
-#ifdef WIN32
-    /* TODO: Check if IOCP exists. Otherwise, fallback to select */
-    #define SELECT
+#else
+	#ifdef _WIN32
+    	/* TODO: Check if IOCP exists. Otherwise, fallback to select */
+    	#define SELECT
+	#endif
 #endif
 
 #ifdef EPOLL
     #include <sys/epoll.h>
-#else
-    #ifdef WIN32
+#endif
+
+#ifdef SELECT
+    #ifdef _WIN32
         #define FD_SETSIZE 10000 /* TODO: Find the max # of open sockets instead of a hardcoded value */
     #else
         #define FD_SETSIZE FOPEN_MAX
@@ -90,10 +97,6 @@ If not, fallback to select */
 #define INET6_ADDRSTRLEN 46
 #endif
 
-/* TODO: Tweak this number and profile */
-/* TODO: Disregard that. Better let the user specify MAXEVENTS */
-#define MAXEVENTS 64
-
 #ifdef __GNUC__
 #define likely(x) __builtin_expect((x),1)
 #define unlikely(x) __builtin_expect((x),0)
@@ -106,11 +109,8 @@ If not, fallback to select */
 #define SOCK_NONBLOCK 1
 #endif
 
-#define LISTEN_BACKLOG 5 /* TODO: This one should be a variable that the user is
-allowed to specify */
-
 static int setnoblock(int fd) {
-#ifndef WIN32
+#ifndef _WIN32
     int flags;
     flags = fcntl(fd, F_GETFL, 0);
     flags |= O_NONBLOCK;
@@ -122,8 +122,8 @@ static int setnoblock(int fd) {
 #endif
 }
 
-static int tcp_create_listener(char *hostname, char *port) {
-    int status, fd;
+static int tcp_create_listener(srv_t *ctx, char *hostname, char *port) {
+    int status, fd, reuse_addr;
     struct addrinfo hints;
     struct addrinfo *servinfo;
 
@@ -144,18 +144,12 @@ static int tcp_create_listener(char *hostname, char *port) {
     if(fd == -1)
         return -1;
 
-
-#ifndef WIN32
-    int reuse_addr = 1;
-#else
-    char reuse_addr = true;
-#endif
-
     /* Make the socket available for reuse immediately after it's closed */
-#ifdef WIN32
+    reuse_addr = 1;
+#ifdef _WIN32
     /* NOTE: It turns out Win32 definition of SO_REUSEADDR is not the same as the POSIX definition.
-Instead we use SO_EXCLUSIVEADDRUSE */
-    status = setsockopt(fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, &reuse_addr, sizeof(reuse_addr));
+	   Instead we use SO_EXCLUSIVEADDRUSE */
+    status = setsockopt(fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (char *)&reuse_addr, sizeof(reuse_addr));
 #else
     status = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse_addr, sizeof(reuse_addr));
 #endif
@@ -168,7 +162,7 @@ Instead we use SO_EXCLUSIVEADDRUSE */
         return -1;
 
     /* Listen for incoming connections */
-    status = listen(fd, LISTEN_BACKLOG);
+    status = listen(fd, ctx->backlog);
     if(status == -1)
         return -1;
 
@@ -363,14 +357,14 @@ static inline int event_wait(event_t *ev, int *event_fd, int *event_type) {
         *event_type = 0;
         return 0; /* All events have been handled */
     }
-    
+
     /* Return the number of events waiting to be handled */
     return (ev->nfds - ev->fd_index);
 }
 
 static inline int event_free(event_t *ev) {
     free(ev->events);
-    
+
     if(close(ev->epfd) == -1)
         return -1;
 }
@@ -457,7 +451,7 @@ static inline int event_wait(event_t *ev, int *event_fd, int *event_type) {
         ev->nfds = select(ev->fdmax + 1, &(ev->fds_read),
                           &(ev->fds_write), NULL, NULL);
     }
-    
+
     if(ev->nfds == -1) {
         /* An error occured */
         *event_type = EVENTERR;
@@ -468,7 +462,7 @@ static inline int event_wait(event_t *ev, int *event_fd, int *event_type) {
     else if(ev->nfds == 0) {
         /* No events waiting to be processed */
         *event_type = 0;
-        
+
         return 0;
     }
 
@@ -506,13 +500,12 @@ static inline int event_free(event_t *ev) {
 
 #endif
 
-
 int srv_init(srv_t *ctx) {
     if(!ctx) {
         errno = EINVAL;
         return -1;
     }
-       
+
     /* Set default values for the options */
     ctx->backlog = 1;
     ctx->maxevents = 1000; /* Good enough? */
@@ -533,6 +526,7 @@ int srv_init(srv_t *ctx) {
     return 0;
 }
 
+/* TODO: WSACleanup on error */
 int srv_run(srv_t *ctx, char *hostname, char *port) {
         event_t ev;
 
@@ -546,9 +540,8 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
             return -1;
         }
 
-#ifdef WIN32
-        WSAData wsaData;
-
+#ifdef _WIN32
+        WSADATA wsaData;
         if(WSAStartup(MAKEWORD(2,2), &wsaData) != 0) {
             /* TODO: Set errno */
             return -1;
@@ -562,7 +555,7 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
         }
 
         /* Create a listener socket */
-        if((ctx->fdlistener = tcp_create_listener(hostname, port)) == -1)
+        if((ctx->fdlistener = tcp_create_listener(ctx, hostname, port)) == -1)
             return -1;
 
         /* The listener must not block */
@@ -614,7 +607,7 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
 
                 /* Notify the caller */
                 if(ctx->hnd_rdhup)
-                    (*(ctx->hnd_rdhup))(event_fd);                
+                    (*(ctx->hnd_rdhup))(event_fd);
 
                 event_remove_fd(&ev, event_fd);
                 close(event_fd);
@@ -629,7 +622,7 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
                                             (int *)&cli_port, SOCK_NONBLOCK);
 
                         if(cli_fd == -1) {
-#ifdef WIN32
+#ifdef _WIN32
                             if(WSAGetLastError() == WSAEWOULDBLOCK) {
 #else
                             if(likely((errno == EAGAIN) || (errno == EWOULDBLOCK))) {
@@ -680,6 +673,9 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
         if(event_free(&ev) == -1)
             return -1;
 
+#ifdef _WIN32
+        WSACleanup();
+#endif
         return 0; /* Terminated succesfully */
 }
 
@@ -688,8 +684,9 @@ int srv_hnd_read(srv_t *ctx, int (*h)(int)) {
         errno = EINVAL;
         return -1;
     }
-    
+
     ctx->hnd_read = h;
+    return 0;
 }
 
 int srv_hnd_write(srv_t *ctx, int (*h)(int)) {
@@ -697,8 +694,9 @@ int srv_hnd_write(srv_t *ctx, int (*h)(int)) {
         errno = EINVAL;
         return -1;
     }
-    
+
     ctx->hnd_write = h;
+    return 0;
 }
 
 int srv_hnd_accept(srv_t *ctx, int (*h)(int, char *, int)) {
@@ -706,8 +704,9 @@ int srv_hnd_accept(srv_t *ctx, int (*h)(int, char *, int)) {
         errno = EINVAL;
         return -1;
     }
-    
+
     ctx->hnd_accept = h;
+    return 0;
 }
 
 int srv_hnd_hup(srv_t *ctx, int (*h)(int)) {
@@ -715,8 +714,9 @@ int srv_hnd_hup(srv_t *ctx, int (*h)(int)) {
         errno = EINVAL;
         return -1;
     }
-    
+
     ctx->hnd_hup = h;
+    return 0;
 }
 
 int srv_hnd_rdhup(srv_t *ctx, int (*h)(int)) {
@@ -724,8 +724,9 @@ int srv_hnd_rdhup(srv_t *ctx, int (*h)(int)) {
         errno = EINVAL;
         return -1;
     }
-    
+
     ctx->hnd_rdhup = h;
+    return 0;
 }
 
 int srv_hnd_error(srv_t *ctx, int (*h)(int, int)) {
@@ -733,8 +734,9 @@ int srv_hnd_error(srv_t *ctx, int (*h)(int, int)) {
         errno = EINVAL;
         return -1;
     }
-    
+
     ctx->hnd_error = h;
+    return 0;
 }
 
 int srv_set_backlog(srv_t *ctx, int backlog) {
@@ -744,6 +746,7 @@ int srv_set_backlog(srv_t *ctx, int backlog) {
     }
 
     ctx->backlog = backlog;
+    return 0;
 }
 
 int srv_set_maxevents(srv_t *ctx, int n) {
@@ -753,6 +756,7 @@ int srv_set_maxevents(srv_t *ctx, int n) {
     }
 
     ctx->maxevents = n;
+    return 0;
 }
 
 int srv_notify_read(srv_t *ctx, int fd, int yes) {
