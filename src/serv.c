@@ -28,7 +28,7 @@ SOFTWARE.
 #include <sys/types.h>
 #include <stdint.h>
 
-#include "libserv.h"
+#include "serv.h"
 
 #ifdef __linux__
 #include <netinet/in.h>

@@ -20,8 +20,8 @@
  SOFTWARE.
  */
 
-#ifndef _LIBSERV_H
-#define _LIBSERV_H
+#ifndef _SERV_H
+#define _SERV_H
 
 #define SRV_EACCEPT   0x1
 #define SRV_ESOCKET   0x2

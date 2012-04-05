@@ -5,7 +5,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
-#include "src/libserv.h"
+#include "src/serv.h"
 
 /* Read handler is called whenever a connected socket receives data.
    fd of the socket is passed to the handler function */
