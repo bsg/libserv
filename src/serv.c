@@ -38,8 +38,8 @@ SOFTWARE.
 #include <sys/socket.h>
 #endif
 
-#ifdef MSVC
-#define inline _inline
+#ifdef _MSC_VER
+#define inline __inline
 #else
 #define inline __inline__
 #endif
