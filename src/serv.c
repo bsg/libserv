@@ -534,6 +534,10 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
 
         int  cli_port;
         char cli_addr[INET6_ADDRSTRLEN];
+        
+#ifdef _WIN32
+        WSADATA wsaData;
+#endif
 
         if(!ctx) {
             errno = EINVAL;
@@ -541,7 +545,6 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
         }
 
 #ifdef _WIN32
-        WSADATA wsaData;
         if(WSAStartup(MAKEWORD(2,2), &wsaData) != 0) {
             /* TODO: Set errno */
             return -1;
