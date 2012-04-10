@@ -245,8 +245,8 @@ static int tcp_accept(int fd, char *ip, int *port, int flags) {
 }
 
 int srv_read(int fd, char *buf, int size) {
-    /* TODO: Implementation */
-    return 0;
+    /* TODO: WSAGetLastError */
+    return read(fd, buf, size);
 }
 
 int srv_readall(int fd, char *buf, int size) {
@@ -267,8 +267,8 @@ int srv_readall(int fd, char *buf, int size) {
 }
 
 int srv_write(int fd, char *buf, int size) {
-    /* TODO: Implementation */
-    return 0;
+    /* TODO: WSAGetLastError */
+    return write(fd, buf, size);
 }
 
 int srv_writeall(int fd, char *buf, int size) {
