@@ -644,7 +644,7 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
                         /* Add the new fd to the event list */
                         event_add_fd(&ev, cli_fd, ctx->newfd_event_flags); /* TODO: Error handling */
 
-                        /* Accepted connection. Call the on_accept handler */
+                        /* Accepted connection. Call the accept handler */
                         if(ctx->hnd_accept != NULL) {
                             (*(ctx->hnd_accept))(cli_fd, cli_addr, cli_port);
                         }
