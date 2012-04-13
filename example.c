@@ -9,7 +9,7 @@
 
 /* Read handler is called whenever a connected socket receives data.
    fd of the socket is passed to the handler function */
-int read_handler(int fd) {
+int read_handler(srv_t *ctx, int fd) {
     char buffer[256];
     int nread;
 
@@ -26,7 +26,7 @@ int read_handler(int fd) {
 
 /* Accept handler is called whenever a new connection is accepted
    by the server */
-int accept_handler(int fd, char *addr, int port) {
+int accept_handler(srv_t *ctx, int fd, char *addr, int port) {
     printf("Incoming connection from %s:%d\n", addr, port);
     
     return 0;
@@ -39,10 +39,10 @@ int main(void) {
     if(srv_init(&srv) == -1)
         perror("srv_init");
 
-    /* Set read handler */
+    /* Set the read handler */
     srv_hnd_read(&srv, read_handler);
     
-    /* Set write handler */
+    /* Set the accept handler */
     srv_hnd_accept(&srv, accept_handler);
 
     /* Initialize and start the server */

@@ -23,25 +23,31 @@
 #ifndef _SERV_H
 #define _SERV_H
 
-#define SRV_EACCEPT   0x1
-#define SRV_ESOCKET   0x2
-#define SRV_ENOBLOCK  0x3
-#define SRV_EEVINIT   0x4
-#define SRV_EEVADD    0x5
-#define SRV_ECLOSE    0x6
-#define SRV_ESHUT     0x7
+#define SRV_EACCEPT   1
+#define SRV_ESOCKET   2
+#define SRV_ENOBLOCK  4
+#define SRV_EEVINIT   8
+#define SRV_EEVADD    16
+#define SRV_ECLOSE    32
+#define SRV_ESHUT     64
 
-typedef struct {
+#define SRV_EVENTRD   1
+#define SRV_EVENTWR   2
+
+typedef struct _srv {
     int fdlistener, maxevents, backlog;
     int szreadbuf, szwritebuf;
     unsigned int newfd_event_flags;
 
-    int (*hnd_read)(int);
-    int (*hnd_write)(int);
-    int (*hnd_accept)(int, char *, int);
-    int (*hnd_hup)(int);
-    int (*hnd_rdhup)(int);
-    int (*hnd_error)(int, int);
+    int (*hnd_read)(struct _srv *, int);
+    int (*hnd_write)(struct _srv *, int);
+    int (*hnd_accept)(struct _srv *, int, char *, int);
+    int (*hnd_hup)(struct _srv *, int);
+    int (*hnd_rdhup)(struct _srv *, int);
+    int (*hnd_error)(struct _srv *, int, int);
+
+    /* Pointer to the event_t structure declared in srv_run() */
+    void *ev;
 } srv_t;
 
 int srv_init(srv_t *);
@@ -58,18 +64,15 @@ int srv_closeconn(int);
 int srv_set_backlog(srv_t *, int);
 int srv_set_maxevents(srv_t *, int);
 
-int srv_notify_read(srv_t *, int, int);
-int srv_notify_write(srv_t *, int, int);
+int srv_notify_event(srv_t *, int, unsigned int);
+int srv_newfd_notify_event(srv_t *, unsigned int);
 
-int srv_newfd_notify_read(srv_t *, int);
-int srv_newfd_notify_write(srv_t *, int);
-
-int srv_hnd_read(srv_t *, int (*)(int));
-int srv_hnd_write(srv_t *, int (*)(int));
-int srv_hnd_accept(srv_t *, int (*)(int, char *, int));
-int srv_hnd_hup(srv_t *, int (*)(int));
-int srv_hnd_rdhup(srv_t *, int (*)(int));
-int srv_hnd_error(srv_t *, int (*)(int, int));
+int srv_hnd_read(srv_t *, int (*)(srv_t *, int));
+int srv_hnd_write(srv_t *, int (*)(srv_t *, int));
+int srv_hnd_accept(srv_t *, int (*)(srv_t *, int, char *, int));
+int srv_hnd_hup(srv_t *, int (*)(srv_t *, int));
+int srv_hnd_rdhup(srv_t *, int (*)(srv_t *, int));
+int srv_hnd_error(srv_t *, int (*)(srv_t *, int, int));
 
 int srv_get_listenerfd(srv_t *);
 

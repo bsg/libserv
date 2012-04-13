@@ -198,8 +198,7 @@ int srv_connect(char *hostname, char *port) {
 }
 
 int srv_closeconn(int fd) {
-    /* TODO: Remove from event mechanism */
-    /* TODO: shutdown? */
+    /* TODO: Remove from the event mechanism */
     return close(fd);
 }
 
@@ -292,11 +291,11 @@ int srv_writeall(int fd, char *buf, int size) {
 
 #ifdef EPOLL
 
-#define EVENTRD EPOLLIN
-#define EVENTWR EPOLLOUT
-#define EVENTHUP EPOLLHUP
+#define EVENTRD    EPOLLIN
+#define EVENTWR    EPOLLOUT
+#define EVENTHUP   EPOLLHUP
 #define EVENTRDHUP EPOLLRDHUP
-#define EVENTERR EPOLLERR
+#define EVENTERR   EPOLLERR
 
 typedef struct {
     struct epoll_event *events;
@@ -320,9 +319,17 @@ static inline int event_add_fd(event_t *ev, int fd, uint32_t flags) {
         struct epoll_event tmp_event;
 
         tmp_event.data.fd = fd;
-        tmp_event.events = flags | EPOLLET; /* Use the edge-triggered mode */
+        tmp_event.events = flags;
 
         return epoll_ctl(ev->epfd, EPOLL_CTL_ADD, fd, &tmp_event);
+}
+
+static inline int event_mod_fd(event_t *ev, int fd, uint32_t flags) {
+    struct epoll_event tmp_event;
+    tmp_event.data.fd = fd;
+    tmp_event.events = flags;
+
+    return epoll_ctl(ev->epfd, EPOLL_CTL_MOD, fd, &tmp_event);
 }
 
 static inline int event_remove_fd(event_t *ev, int fd) {
@@ -372,11 +379,11 @@ static inline int event_free(event_t *ev) {
 
 #ifdef SELECT
 
-#define EVENTRD 1
-#define EVENTWR 2
-#define EVENTHUP 4
-#define EVENTRDHUP 8
-#define EVENTERR 16
+#define EVENTRD     1
+#define EVENTWR     2
+#define EVENTHUP    4
+#define EVENTRDHUP  8
+#define EVENTERR   16
 
 typedef struct {
     fd_set fds_read_master, fds_read, fds_write_master, fds_write;
@@ -400,7 +407,7 @@ static inline int event_init(event_t *ev, int max_events) {
 
 static inline int event_add_fd(event_t *ev, int fd, uint32_t flags) {
     if(fd >= FD_SETSIZE) {
-        errno = EBUSY; /* fd set is full */
+        errno = ENOSPC; /* fd set is full */
         return -1;
     }
 
@@ -417,6 +424,28 @@ static inline int event_add_fd(event_t *ev, int fd, uint32_t flags) {
     /* Update fdmax */
     if(fd > ev->fdmax)
         ev->fdmax = fd;
+
+    return 0;
+}
+
+static inline int event_mod_fd(event_t *ev, int fd, uint32_t flags) {
+    if(flags & EVENTRD) {
+        /* Add the fd to the read fd_set */
+        FD_SET(fd, &(ev->fds_read_master));
+    }
+    else {
+        /* Remove the fd from the read fd_set */
+        FD_CLR(fd, &(ev->fds_read_master));
+    }
+
+    if(flags & EVENTWR) {
+        /* Add the fd to the write fd_set */
+        FD_SET(fd, &(ev->fds_write_master));
+    }
+    else {
+        /* Remove the fd from the write fd_set */
+        FD_CLR(fd, &(ev->fds_write_master));
+    }
 
     return 0;
 }
@@ -544,6 +573,10 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
             return -1;
         }
 
+        /* Pointer to th event_t structure. Needed for srv_notify_event()
+           and srv_newfd_notify_event() */
+        ctx->ev = (void *) &ev;
+
 #ifdef _WIN32
         if(WSAStartup(MAKEWORD(2,2), &wsaData) != 0) {
             /* TODO: Set errno */
@@ -590,7 +623,7 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
 
                 /* Notify the caller */
                 if(ctx->hnd_error)
-                    (*(ctx->hnd_error))(event_fd, 0); /* TODO: Return the proper error no */
+                    (*(ctx->hnd_error))(ctx, event_fd, 0); /* TODO: Return the proper error no */
 
                 event_remove_fd(&ev, event_fd);
                 close(event_fd);
@@ -600,7 +633,7 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
 
                 /* Notify the caller */
                 if(ctx->hnd_hup)
-                    (*(ctx->hnd_hup))(event_fd);
+                    (*(ctx->hnd_hup))(ctx, event_fd);
 
                 event_remove_fd(&ev, event_fd);
                 close(event_fd);
@@ -610,7 +643,7 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
 
                 /* Notify the caller */
                 if(ctx->hnd_rdhup)
-                    (*(ctx->hnd_rdhup))(event_fd);
+                    (*(ctx->hnd_rdhup))(ctx, event_fd);
 
                 event_remove_fd(&ev, event_fd);
                 close(event_fd);
@@ -636,7 +669,7 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
                             else {
                                 /* accept returned error */
                                 if(ctx->hnd_error)
-                                    ((*ctx->hnd_error))(cli_fd, SRV_EACCEPT);
+                                    ((*ctx->hnd_error))(ctx, cli_fd, SRV_EACCEPT);
                                 break;
                             }
                         }
@@ -646,14 +679,29 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
 
                         /* Accepted connection. Call the accept handler */
                         if(ctx->hnd_accept != NULL) {
-                            (*(ctx->hnd_accept))(cli_fd, cli_addr, cli_port);
+                            (*(ctx->hnd_accept))(ctx, cli_fd, cli_addr, cli_port);
                         }
                     }
                 }
                 else {
                     /* Data available for read */
-                    if((*(ctx->hnd_read))(event_fd)) {
+                    if((*(ctx->hnd_read))(ctx, event_fd)) {
                         /* Handler requested the connection to be closed. */
+
+                        /* Remove the fd from the event list */
+                        /* TODO: Removal might be expensive on some event notification
+                           mechanisms. Don't remove the fd if keeping it will be less expensive. */
+                        event_remove_fd(&ev, event_fd);
+                        close(event_fd);
+                    }
+                }
+            }
+
+            if(event_type & EVENTWR) {
+                /* Socket ready for write */
+                if(ctx->hnd_write) {
+                    if((*(ctx->hnd_write))(ctx, event_fd)) {
+                        /* Handler requested the connection to be closed */
 
                         /* Remove the fd from the event list */
                         /* TODO: Removal might be expensive on some event notification
@@ -682,7 +730,7 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
         return 0; /* Terminated succesfully */
 }
 
-int srv_hnd_read(srv_t *ctx, int (*h)(int)) {
+int srv_hnd_read(srv_t *ctx, int (*h)(srv_t *, int)) {
     if(!ctx) {
         errno = EINVAL;
         return -1;
@@ -692,7 +740,7 @@ int srv_hnd_read(srv_t *ctx, int (*h)(int)) {
     return 0;
 }
 
-int srv_hnd_write(srv_t *ctx, int (*h)(int)) {
+int srv_hnd_write(srv_t *ctx, int (*h)(srv_t *, int)) {
     if(!ctx) {
         errno = EINVAL;
         return -1;
@@ -702,7 +750,7 @@ int srv_hnd_write(srv_t *ctx, int (*h)(int)) {
     return 0;
 }
 
-int srv_hnd_accept(srv_t *ctx, int (*h)(int, char *, int)) {
+int srv_hnd_accept(srv_t *ctx, int (*h)(srv_t *, int, char *, int)) {
     if(!ctx) {
         errno = EINVAL;
         return -1;
@@ -712,7 +760,7 @@ int srv_hnd_accept(srv_t *ctx, int (*h)(int, char *, int)) {
     return 0;
 }
 
-int srv_hnd_hup(srv_t *ctx, int (*h)(int)) {
+int srv_hnd_hup(srv_t *ctx, int (*h)(srv_t *, int)) {
     if(!ctx) {
         errno = EINVAL;
         return -1;
@@ -722,7 +770,7 @@ int srv_hnd_hup(srv_t *ctx, int (*h)(int)) {
     return 0;
 }
 
-int srv_hnd_rdhup(srv_t *ctx, int (*h)(int)) {
+int srv_hnd_rdhup(srv_t *ctx, int (*h)(srv_t *, int)) {
     if(!ctx) {
         errno = EINVAL;
         return -1;
@@ -732,7 +780,7 @@ int srv_hnd_rdhup(srv_t *ctx, int (*h)(int)) {
     return 0;
 }
 
-int srv_hnd_error(srv_t *ctx, int (*h)(int, int)) {
+int srv_hnd_error(srv_t *ctx, int (*h)(srv_t *, int, int)) {
     if(!ctx) {
         errno = EINVAL;
         return -1;
@@ -762,23 +810,38 @@ int srv_set_maxevents(srv_t *ctx, int n) {
     return 0;
 }
 
-int srv_notify_read(srv_t *ctx, int fd, int yes) {
-    /* TODO: Implementation */
-    return 0;
+int srv_notify_event(srv_t *ctx, int fd, unsigned int flags) {
+    uint32_t f;
+    
+    if(!ctx) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    f = 0;
+    if(flags & SRV_EVENTRD)
+        f |= EVENTRD;
+    if(flags & SRV_EVENTWR)
+        f |= EVENTWR;
+
+    return event_mod_fd((event_t *) ctx->ev, fd, f);
 }
 
-int srv_notify_write(srv_t *ctx, int fd, int yes) {
-    /* TODO: Implementation */
-    return 0;
-}
+int srv_newfd_notify_event(srv_t *ctx, unsigned int flags) {
+    uint32_t f;
+    
+    if(!ctx) {
+        errno = EINVAL;
+        return -1;
+    }
 
-int srv_newfd_notify_read(srv_t *ctx, int yes) {
-    /* TODO: Implementation */
-    return 0;
-}
+    f = 0;
+    if(flags & SRV_EVENTRD)
+        f |= EVENTRD;
+    if(flags & SRV_EVENTWR)
+        f |= EVENTWR;
 
-int srv_newfd_notify_write(srv_t *ctx, int yes) {
-    /* TODO: Implementation */
+    ctx->newfd_event_flags = f;
     return 0;
 }
 
@@ -790,3 +853,4 @@ int srv_get_listenerfd(srv_t *ctx) {
 
     return ctx->fdlistener;
 }
+
