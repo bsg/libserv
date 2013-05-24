@@ -1,4 +1,1 @@
 libserv - A cross-platform non-blocking TCP server library
-
-IMPORTANT NOTE: The project is still a work in progress. The software is not
-tested thoroughly and should not be used in a serious project.
