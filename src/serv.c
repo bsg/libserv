@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2011 Cem Saldırım <bytesong@gmail.com>
+Copyright (C) 2011 Cem Saldırım <cem.saldirim@gmail.com>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in
