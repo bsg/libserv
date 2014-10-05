@@ -84,7 +84,6 @@ libserv_EXPORT int srv_set_backlog(srv_t *, int);
 libserv_EXPORT int srv_set_maxevents(srv_t *, int);
 
 libserv_EXPORT int srv_notify_event(srv_t *, int, unsigned int);
-libserv_EXPORT int srv_notify_event(srv_t *, int, unsigned int);
 libserv_EXPORT int srv_newfd_notify_event(srv_t *, unsigned int);
 
 libserv_EXPORT int srv_hnd_read(srv_t *, void (*)(srv_t *, int));
