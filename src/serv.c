@@ -192,68 +192,72 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
         if(event_wait(&ev, &event_fd, &event_type) == -1) {
             /* TODO: Handle EINTR */
             return -1;
-    }
+        }
 
-    /* Handle the event */
-    if(!event_type) {
-        /* No events. We should never get here in the first place */
-        continue;
-    }
+        /* Handle the event */
+        if(!event_type) {
+            /* No events. We should never get here in the first place */
+            continue;
+        }
 
-    if(event_type & EVENTERR) {
-        /* An error has occured */
+        if(event_type & EVENTERR) {
+            /* An error has occured */
 
-        /* Notify the caller */
-        if(ctx->hnd_error)
-            (*(ctx->hnd_error))(ctx, event_fd, 0); /* TODO: Return the proper error no */
+            /* Notify the caller */
+            if(ctx->hnd_error) {
+                (*(ctx->hnd_error))(ctx, event_fd, 0); /* TODO: Return the proper error no */
+            }
 
-        event_remove_fd(&ev, event_fd);
-        close(event_fd);
-    }
+            event_remove_fd(&ev, event_fd);
+            close(event_fd);
+        }
 
-    if(event_type & EVENTHUP) {
-        /* The connection has been shutdown unexpectedly */
+        if(event_type & EVENTHUP) {
+            /* The connection has been shutdown unexpectedly */
 
-        /* Notify the caller */
-        if(ctx->hnd_hup)
-            (*(ctx->hnd_hup))(ctx, event_fd);
+            /* Notify the caller */
+            if(ctx->hnd_hup) {
+                (*(ctx->hnd_hup))(ctx, event_fd);
+            }
 
-        event_remove_fd(&ev, event_fd);
-        close(event_fd);
-    }
+            event_remove_fd(&ev, event_fd);
+            close(event_fd);
+        }
 
-    if (event_type & EVENTRDHUP) {
-        /* The client has closed the connection */
+        if (event_type & EVENTRDHUP) {
+            /* The client has closed the connection */
 
-        /* Notify the caller */
-        if(ctx->hnd_rdhup)
-            (*(ctx->hnd_rdhup))(ctx, event_fd);
+            /* Notify the caller */
+            if(ctx->hnd_rdhup) {
+                (*(ctx->hnd_rdhup))(ctx, event_fd);
+            }
 
-        event_remove_fd(&ev, event_fd);
-        close(event_fd);
-    }
+            event_remove_fd(&ev, event_fd);
+            close(event_fd);
+        }
 
-    if(event_type & EVENTRD) {
-        if(event_fd == ctx->fdlistener) {
-            /* Incoming connection */
-            while(1) {
-                /* Accept the connection */
-                cli_fd = srv_tcp_accept(ctx->fdlistener, (char *)&cli_addr,
-                            (int *)&cli_port, SOCK_NONBLOCK);
+        if(event_type & EVENTRD) {
+            if(event_fd == ctx->fdlistener) {
+                /* Incoming connection */
+                while(1) {
+                    /* Accept the connection */
+                    cli_fd = srv_tcp_accept(ctx->fdlistener, (char *)&cli_addr,
+                                (int *)&cli_port, SOCK_NONBLOCK);
 
-                if(cli_fd == -1) {
+                    if(cli_fd == -1) {
 #ifdef _WIN32
-                    if(WSAGetLastError() == WSAEWOULDBLOCK) {
+                        if(WSAGetLastError() == WSAEWOULDBLOCK) {
 #else
-                    if(likely((errno == EAGAIN) || (errno == EWOULDBLOCK))) {
+                        if(likely((errno == EAGAIN) || (errno == EWOULDBLOCK))) {
 #endif
-                        /* We've processed all incoming connections */
-                        break;
-                    }
-                    else {
-                        /* accept returned error */
-                        if(ctx->hnd_error)
-                            ((*ctx->hnd_error))(ctx, cli_fd, SRV_EACCEPT);
+                            /* We've processed all incoming connections */
+                            break;
+                        }
+                        else {
+                            /* accept returned error */
+                            if(ctx->hnd_error) {
+                                ((*ctx->hnd_error))(ctx, cli_fd, SRV_EACCEPT);
+                            }
                             break;
                         }
                     }
@@ -262,21 +266,14 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
                     event_add_fd(&ev, cli_fd, ctx->newfd_event_flags); /* TODO: Error handling */
 
                     /* Accepted connection. Call the accept handler */
-                    if(ctx->hnd_accept != NULL) 
+                    if(ctx->hnd_accept) {
                         (*(ctx->hnd_accept))(ctx, cli_fd, cli_addr, cli_port);
+                    }
                 }
             }
-        }
-        else {
-            /* Data available for read */
-            if((*(ctx->hnd_read))(ctx, event_fd)) {
-                /* Handler requested the connection to be closed. */
-
-                /* Remove the fd from the event list */
-                /* TODO: Removal might be expensive on some event notification
-                    mechanisms. Don't remove the fd if keeping it will be less expensive. */
-                event_remove_fd(&ev, event_fd);
-                close(event_fd);
+            else {
+                /* Data available for read */
+                (*(ctx->hnd_read))(ctx, event_fd);
             }
         }
     }
@@ -284,14 +281,7 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
     if(event_type & EVENTWR) {
         /* Socket ready for write */
         if(ctx->hnd_write) {
-            if((*(ctx->hnd_write))(ctx, event_fd)) {
-                /* Handler requested the connection to be closed */
-                    
-                /* Remove the fd from the event list */
-                event_remove_fd(&ev, event_fd);
-                close(event_fd);
-                }
-            }
+            (*(ctx->hnd_write))(ctx, event_fd);
         }
     }
 
@@ -312,7 +302,7 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
     return 0; /* Terminated succesfully */
 }
 
-int srv_hnd_read(srv_t *ctx, int (*h)(srv_t *, int)) {
+int srv_hnd_read(srv_t *ctx, void (*h)(srv_t *, int)) {
     if(!ctx) {
         errno = EINVAL;
         return -1;
@@ -322,7 +312,7 @@ int srv_hnd_read(srv_t *ctx, int (*h)(srv_t *, int)) {
     return 0;
 }
 
-int srv_hnd_write(srv_t *ctx, int (*h)(srv_t *, int)) {
+int srv_hnd_write(srv_t *ctx, void (*h)(srv_t *, int)) {
     if(!ctx) {
         errno = EINVAL;
         return -1;
@@ -332,7 +322,7 @@ int srv_hnd_write(srv_t *ctx, int (*h)(srv_t *, int)) {
     return 0;
 }
 
-int srv_hnd_accept(srv_t *ctx, int (*h)(srv_t *, int, char *, int)) {
+int srv_hnd_accept(srv_t *ctx, void (*h)(srv_t *, int, char *, int)) {
     if(!ctx) {
         errno = EINVAL;
         return -1;
@@ -342,7 +332,7 @@ int srv_hnd_accept(srv_t *ctx, int (*h)(srv_t *, int, char *, int)) {
     return 0;
 }
 
-int srv_hnd_hup(srv_t *ctx, int (*h)(srv_t *, int)) {
+int srv_hnd_hup(srv_t *ctx, void (*h)(srv_t *, int)) {
     if(!ctx) {
         errno = EINVAL;
         return -1;
@@ -352,7 +342,7 @@ int srv_hnd_hup(srv_t *ctx, int (*h)(srv_t *, int)) {
     return 0;
 }
 
-int srv_hnd_rdhup(srv_t *ctx, int (*h)(srv_t *, int)) {
+int srv_hnd_rdhup(srv_t *ctx, void (*h)(srv_t *, int)) {
     if(!ctx) {
         errno = EINVAL;
         return -1;
@@ -362,7 +352,7 @@ int srv_hnd_rdhup(srv_t *ctx, int (*h)(srv_t *, int)) {
     return 0;
 }
 
-int srv_hnd_error(srv_t *ctx, int (*h)(srv_t *, int, int)) {
+int srv_hnd_error(srv_t *ctx, void (*h)(srv_t *, int, int)) {
     if(!ctx) {
         errno = EINVAL;
         return -1;

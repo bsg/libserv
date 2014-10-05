@@ -51,12 +51,12 @@ typedef struct _srv {
     int szreadbuf, szwritebuf;
     unsigned int newfd_event_flags;
 
-    int (*hnd_read)(struct _srv *, int);
-    int (*hnd_write)(struct _srv *, int);
-    int (*hnd_accept)(struct _srv *, int, char *, int);
-    int (*hnd_hup)(struct _srv *, int);
-    int (*hnd_rdhup)(struct _srv *, int);
-    int (*hnd_error)(struct _srv *, int, int);
+    void (*hnd_read)(struct _srv *, int);
+    void (*hnd_write)(struct _srv *, int);
+    void (*hnd_accept)(struct _srv *, int, char *, int);
+    void (*hnd_hup)(struct _srv *, int);
+    void (*hnd_rdhup)(struct _srv *, int);
+    void (*hnd_error)(struct _srv *, int, int);
 
     /* Pointer to the event_t structure declared in srv_run() */
     void *ev;
@@ -84,12 +84,12 @@ libserv_EXPORT int srv_notify_event(srv_t *, int, unsigned int);
 libserv_EXPORT int srv_notify_event(srv_t *, int, unsigned int);
 libserv_EXPORT int srv_newfd_notify_event(srv_t *, unsigned int);
 
-libserv_EXPORT int srv_hnd_read(srv_t *, int (*)(srv_t *, int));
-libserv_EXPORT int srv_hnd_write(srv_t *, int (*)(srv_t *, int));
-libserv_EXPORT int srv_hnd_accept(srv_t *, int (*)(srv_t *, int, char *, int));
-libserv_EXPORT int srv_hnd_hup(srv_t *, int (*)(srv_t *, int));
-libserv_EXPORT int srv_hnd_rdhup(srv_t *, int (*)(srv_t *, int));
-libserv_EXPORT int srv_hnd_error(srv_t *, int (*)(srv_t *, int, int));
+libserv_EXPORT int srv_hnd_read(srv_t *, void (*)(srv_t *, int));
+libserv_EXPORT int srv_hnd_write(srv_t *, void (*)(srv_t *, int));
+libserv_EXPORT int srv_hnd_accept(srv_t *, void (*)(srv_t *, int, char *, int));
+libserv_EXPORT int srv_hnd_hup(srv_t *, void (*)(srv_t *, int));
+libserv_EXPORT int srv_hnd_rdhup(srv_t *, void (*)(srv_t *, int));
+libserv_EXPORT int srv_hnd_error(srv_t *, void (*)(srv_t *, int, int));
 
 libserv_EXPORT int srv_get_listenerfd(srv_t *);
 
