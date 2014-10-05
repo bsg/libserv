@@ -63,7 +63,7 @@ SOFTWARE.
         #define EPOLL
     #else
     /* TODO: Check if poll, kqueue or IOCP is avalable.
-If not, fallback to select */
+        If not, fallback to select */
         #define SELECT
     #endif
 #else

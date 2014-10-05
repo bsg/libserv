@@ -29,7 +29,7 @@ int write(int fd, char *buffer, int size);
 #endif
 
 int srv_setnoblock(int fd);
-int srv_tcp_create_listener(srv_t *ctx, char *hostname, char *port);
+int srv_tcp_create_listener(srv_t *ctx);
 int srv_tcp_accept(int fd, char *ip, int *port, int flags);
 
 #endif

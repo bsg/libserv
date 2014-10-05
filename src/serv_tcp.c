@@ -46,7 +46,7 @@ int srv_setnoblock(int fd) {
 #endif
 }
 
-int srv_tcp_create_listener(srv_t *ctx, char *hostname, char *port) {
+int srv_tcp_create_listener(srv_t *ctx) {
     int status, fd, reuse_addr;
     struct addrinfo hints;
     struct addrinfo *servinfo;
@@ -55,10 +55,10 @@ int srv_tcp_create_listener(srv_t *ctx, char *hostname, char *port) {
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
-    if(!hostname)
+    if(!ctx->host)
         hints.ai_flags = AI_PASSIVE;
 
-    status = getaddrinfo(hostname, port, &hints, &servinfo);
+    status = getaddrinfo(ctx->host, ctx->port, &hints, &servinfo);
     if(status) {
         /* TODO: Check the error code and set errno appropriately */
         return -1;
@@ -92,6 +92,7 @@ int srv_tcp_create_listener(srv_t *ctx, char *hostname, char *port) {
 
     return fd;
 }
+
 int srv_tcp_accept(int fd, char *ip, int *port, int flags) {
     int fd_new;
     struct sockaddr_storage addr;

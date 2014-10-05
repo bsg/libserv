@@ -58,8 +58,8 @@ int srv_connect(char *hostname, char *port) {
     return fd;
 }
 
-int srv_closeconn(int fd) {
-    /* TODO: Remove from the event mechanism */
+int srv_close(srv_t *ctx, int fd) {
+    event_remove_fd(ctx->ev, fd);
     return close(fd);
 }
 
@@ -127,6 +127,8 @@ int srv_init(srv_t *ctx) {
 #endif
 
     /* Set default values for the options */
+    ctx->host = NULL;
+    ctx->port = NULL;
     ctx->backlog = 1;
     ctx->maxevents = 1000; /* Good enough? */
     ctx->szreadbuf  = 512;
@@ -147,7 +149,7 @@ int srv_init(srv_t *ctx) {
 }
 
 /* TODO: WSACleanup on error */
-int srv_run(srv_t *ctx, char *hostname, char *port) {
+int srv_run(srv_t *ctx) {
     event_t ev;
 
     int event_fd, cli_fd, event_type;
@@ -165,14 +167,14 @@ int srv_run(srv_t *ctx, char *hostname, char *port) {
        and srv_newfd_notify_event() */
     ctx->ev = (void *) &ev;
 
-    /* We must have a read handler */
-    if(ctx->hnd_read == NULL) {
+    /* Port must be specified and we must have a read handler */
+    if(ctx->port == NULL || ctx->hnd_read == NULL) {
         errno = EINVAL; /* Invalid argument */
         return -1;
     }
 
     /* Create a listener socket */
-    if((ctx->fdlistener = srv_tcp_create_listener(ctx, hostname, port)) == -1)
+    if((ctx->fdlistener = srv_tcp_create_listener(ctx)) == -1)
         return -1;
 
     /* The listener must not block */
@@ -360,6 +362,14 @@ int srv_hnd_error(srv_t *ctx, void (*h)(srv_t *, int, int)) {
 
     ctx->hnd_error = h;
     return 0;
+}
+
+void srv_set_host(srv_t *ctx, char *host) {
+    ctx->host = host;
+}
+
+void srv_set_port(srv_t *ctx, char *port) {
+    ctx->port = port;
 }
 
 int srv_set_backlog(srv_t *ctx, int backlog) {

@@ -47,6 +47,7 @@
 #define SRV_EVENTWR   2
 
 typedef struct _srv {
+    char *host, *port;
     int fdlistener, maxevents, backlog;
     int szreadbuf, szwritebuf;
     unsigned int newfd_event_flags;
@@ -68,15 +69,17 @@ extern "C" {
 
 libserv_EXPORT int srv_init(srv_t *);
 
-libserv_EXPORT int srv_run(srv_t *, char *, char *);
+libserv_EXPORT int srv_run(srv_t *);
 libserv_EXPORT int srv_read(int, char *, int);
 libserv_EXPORT int srv_write(int, char *, int);
 libserv_EXPORT int srv_readall(int, char *, int);
 libserv_EXPORT int srv_writeall(int, char *, int);
 
 libserv_EXPORT int srv_connect(char *, char *);
-libserv_EXPORT int srv_closeconn(int);
+libserv_EXPORT int srv_close(srv_t *, int);
 
+libserv_EXPORT void srv_set_host(srv_t *, char *);
+libserv_EXPORT void srv_set_port(srv_t *, char *);
 libserv_EXPORT int srv_set_backlog(srv_t *, int);
 libserv_EXPORT int srv_set_maxevents(srv_t *, int);
 
