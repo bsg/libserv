@@ -58,23 +58,26 @@ int srv_connect(char *hostname, char *port) {
     return fd;
 }
 
-int srv_close(srv_t *ctx, int fd) {
-    event_remove_fd(ctx->ev, fd);
+int srv_close(srv_conn *conn) {
+    int fd;
+    fd = conn->fd;
+    event_remove_fd(conn->ctx->ev, fd);
+    remove_conn_by_fd(fd);
     return close(fd);
 }
 
-int srv_read(int fd, char *buf, int size) {
+int srv_read(srv_conn *conn, char *buf, int size) {
     /* TODO: WSAGetLastError */
-    return read(fd, buf, size);
+    return read(conn->fd, buf, size);
 }
 
-int srv_readall(int fd, char *buf, int size) {
+int srv_readall(srv_conn *conn, char *buf, int size) {
     /* TODO: Handle EINTR */
     int nread, total_read = 0;
 
     /* Make sure 'size' bytes are read */
     while(total_read != size) {
-        nread = read(fd, buf, size - total_read);
+        nread = read(conn->fd, buf, size - total_read);
 
         if(nread <= 0)
             return total_read;
@@ -85,18 +88,18 @@ int srv_readall(int fd, char *buf, int size) {
     return total_read;
 }
 
-int srv_write(int fd, char *buf, int size) {
+int srv_write(srv_conn *conn, char *buf, int size) {
     /* TODO: WSAGetLastError */
-    return write(fd, buf, size);
+    return write(conn->fd, buf, size);
 }
 
-int srv_writeall(int fd, char *buf, int size) {
+int srv_writeall(srv_conn *conn, char *buf, int size) {
     /* TODO: Handle EINTR */
     int nwritten, total_written = 0;
 
     /* Make sure 'size' bytes are written */
     while(total_written != size) {
-        nwritten = write(fd, buf, size - total_written);
+        nwritten = write(conn->fd, buf, size - total_written);
 
         switch(nwritten) {
             case 0: return total_written; break;
@@ -156,7 +159,8 @@ int srv_run(srv_t *ctx) {
 
     int  cli_port;
     char cli_addr[INET6_ADDRSTRLEN];
-       
+    
+    srv_conn *conn;
 
     if(!ctx) {
         errno = EINVAL;
@@ -207,7 +211,8 @@ int srv_run(srv_t *ctx) {
 
             /* Notify the caller */
             if(ctx->hnd_error) {
-                (*(ctx->hnd_error))(ctx, event_fd, 0); /* TODO: Return the proper error no */
+                conn = get_conn_by_fd(event_fd);
+                (*(ctx->hnd_error))(conn, 0); /* TODO: Return the proper error no */
             }
 
             event_remove_fd(&ev, event_fd);
@@ -219,7 +224,8 @@ int srv_run(srv_t *ctx) {
 
             /* Notify the caller */
             if(ctx->hnd_hup) {
-                (*(ctx->hnd_hup))(ctx, event_fd);
+                conn = get_conn_by_fd(event_fd);
+                (*(ctx->hnd_hup))(conn);
             }
 
             event_remove_fd(&ev, event_fd);
@@ -231,7 +237,8 @@ int srv_run(srv_t *ctx) {
 
             /* Notify the caller */
             if(ctx->hnd_rdhup) {
-                (*(ctx->hnd_rdhup))(ctx, event_fd);
+                conn = get_conn_by_fd(event_fd);
+                (*(ctx->hnd_rdhup))(conn);
             }
 
             event_remove_fd(&ev, event_fd);
@@ -258,7 +265,8 @@ int srv_run(srv_t *ctx) {
                         else {
                             /* accept returned error */
                             if(ctx->hnd_error) {
-                                ((*ctx->hnd_error))(ctx, cli_fd, SRV_EACCEPT);
+                                conn = get_conn_by_fd(cli_fd);
+                                ((*ctx->hnd_error))(conn, SRV_EACCEPT);
                             }
                             break;
                         }
@@ -267,15 +275,22 @@ int srv_run(srv_t *ctx) {
                     /* Add the new fd to the event list */
                     event_add_fd(&ev, cli_fd, ctx->newfd_event_flags); /* TODO: Error handling */
 
+                    /* Add the connection to the list */
+                    conn = new_conn(ctx, cli_fd);
+                    conn->host = cli_addr;
+                    conn->port = cli_port;
+                    add_conn_by_fd(cli_fd, conn);
+
                     /* Accepted connection. Call the accept handler */
                     if(ctx->hnd_accept) {
-                        (*(ctx->hnd_accept))(ctx, cli_fd, cli_addr, cli_port);
+                        (*(ctx->hnd_accept))(conn);
                     }
                 }
             }
             else {
                 /* Data available for read */
-                (*(ctx->hnd_read))(ctx, event_fd);
+                conn = get_conn_by_fd(event_fd);
+                (*(ctx->hnd_read))(conn);
             }
         }
     }
@@ -283,7 +298,8 @@ int srv_run(srv_t *ctx) {
     if(event_type & EVENTWR) {
         /* Socket ready for write */
         if(ctx->hnd_write) {
-            (*(ctx->hnd_write))(ctx, event_fd);
+            conn = get_conn_by_fd(event_fd);
+            (*(ctx->hnd_write))(conn);
         }
     }
 
@@ -304,7 +320,7 @@ int srv_run(srv_t *ctx) {
     return 0; /* Terminated succesfully */
 }
 
-int srv_hnd_read(srv_t *ctx, void (*h)(srv_t *, int)) {
+int srv_hnd_read(srv_t *ctx, void (*h)(srv_conn *)) {
     if(!ctx) {
         errno = EINVAL;
         return -1;
@@ -314,7 +330,7 @@ int srv_hnd_read(srv_t *ctx, void (*h)(srv_t *, int)) {
     return 0;
 }
 
-int srv_hnd_write(srv_t *ctx, void (*h)(srv_t *, int)) {
+int srv_hnd_write(srv_t *ctx, void (*h)(srv_conn *)) {
     if(!ctx) {
         errno = EINVAL;
         return -1;
@@ -324,7 +340,7 @@ int srv_hnd_write(srv_t *ctx, void (*h)(srv_t *, int)) {
     return 0;
 }
 
-int srv_hnd_accept(srv_t *ctx, void (*h)(srv_t *, int, char *, int)) {
+int srv_hnd_accept(srv_t *ctx, void (*h)(srv_conn *)) {
     if(!ctx) {
         errno = EINVAL;
         return -1;
@@ -334,7 +350,7 @@ int srv_hnd_accept(srv_t *ctx, void (*h)(srv_t *, int, char *, int)) {
     return 0;
 }
 
-int srv_hnd_hup(srv_t *ctx, void (*h)(srv_t *, int)) {
+int srv_hnd_hup(srv_t *ctx, void (*h)(srv_conn *)) {
     if(!ctx) {
         errno = EINVAL;
         return -1;
@@ -344,7 +360,7 @@ int srv_hnd_hup(srv_t *ctx, void (*h)(srv_t *, int)) {
     return 0;
 }
 
-int srv_hnd_rdhup(srv_t *ctx, void (*h)(srv_t *, int)) {
+int srv_hnd_rdhup(srv_t *ctx, void (*h)(srv_conn *)) {
     if(!ctx) {
         errno = EINVAL;
         return -1;
@@ -354,7 +370,7 @@ int srv_hnd_rdhup(srv_t *ctx, void (*h)(srv_t *, int)) {
     return 0;
 }
 
-int srv_hnd_error(srv_t *ctx, void (*h)(srv_t *, int, int)) {
+int srv_hnd_error(srv_t *ctx, void (*h)(srv_conn *, int)) {
     if(!ctx) {
         errno = EINVAL;
         return -1;
@@ -392,6 +408,7 @@ int srv_set_maxevents(srv_t *ctx, int n) {
     return 0;
 }
 
+/*
 int srv_register_fd(srv_t *ctx, int fd, unsigned int flags) {
     uint32_t f;
 
@@ -408,9 +425,12 @@ int srv_register_fd(srv_t *ctx, int fd, unsigned int flags) {
 
     return event_add_fd((event_t *) ctx->ev, fd, f);
 }
+*/
 
-int srv_notify_event(srv_t *ctx, int fd, unsigned int flags) {
+int srv_notify_event(srv_conn *conn, unsigned int flags) {
     uint32_t f;
+    srv_t *ctx;
+    ctx = conn->ctx;
     
     if(!ctx) {
         errno = EINVAL;
@@ -423,7 +443,7 @@ int srv_notify_event(srv_t *ctx, int fd, unsigned int flags) {
     if(flags & SRV_EVENTWR)
         f |= EVENTWR;
 
-    return event_mod_fd((event_t *) ctx->ev, fd, f);
+    return event_mod_fd((event_t *) ctx->ev, conn->fd, f);
 }
 
 int srv_newfd_notify_event(srv_t *ctx, unsigned int flags) {

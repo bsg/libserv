@@ -1,6 +1,6 @@
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-set(libserv_SOURCES serv.c serv_epoll.c serv_select.c serv_tcp.c)
+set(libserv_SOURCES serv.c serv_epoll.c serv_select.c serv_tcp.c conn.c)
 set(libserv_HEADERS serv.h)
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
@@ -8,6 +8,7 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
     set_source_files_properties(serv_epoll.c PROPERTIES LANGUAGE CXX)
     set_source_files_properties(serv_select.c PROPERTIES LANGUAGE CXX)
     set_source_files_properties(serv_tcp.c PROPERTIES LANGUAGE CXX)
+    set_source_files_properties(conn.c PROPERTIES LANGUAGE CXX)
 endif(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 
 if(${WIN32})

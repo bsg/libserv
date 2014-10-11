@@ -46,22 +46,36 @@
 #define SRV_EVENTRD   1
 #define SRV_EVENTWR   2
 
-typedef struct _srv {
+typedef struct _srv      srv_t;
+typedef struct _srv_conn srv_conn;
+
+struct _srv {
     char *host, *port;
     int fdlistener, maxevents, backlog;
     int szreadbuf, szwritebuf;
     unsigned int newfd_event_flags;
 
-    void (*hnd_read)(struct _srv *, int);
-    void (*hnd_write)(struct _srv *, int);
-    void (*hnd_accept)(struct _srv *, int, char *, int);
-    void (*hnd_hup)(struct _srv *, int);
-    void (*hnd_rdhup)(struct _srv *, int);
-    void (*hnd_error)(struct _srv *, int, int);
+    void (*hnd_read)(srv_conn *);
+    void (*hnd_write)(srv_conn *);
+    void (*hnd_accept)(srv_conn *);
+    void (*hnd_hup)(srv_conn *);
+    void (*hnd_rdhup)(srv_conn *);
+    void (*hnd_error)(srv_conn *, int);
 
     /* Pointer to the event_t structure declared in srv_run() */
     void *ev;
-} srv_t;
+};
+
+struct _srv_conn {
+    srv_t *ctx;
+    int fd;
+    char *host;
+    int port;
+
+    /* To be used internally for higher-level IO functions */
+    void (*hnd_read)(srv_conn *);
+    void (*hnd_write)(srv_conn *);
+};
 
 #ifdef __cplusplus
 extern "C" {
@@ -70,28 +84,28 @@ extern "C" {
 libserv_EXPORT int srv_init(srv_t *);
 
 libserv_EXPORT int srv_run(srv_t *);
-libserv_EXPORT int srv_read(int, char *, int);
-libserv_EXPORT int srv_write(int, char *, int);
-libserv_EXPORT int srv_readall(int, char *, int);
-libserv_EXPORT int srv_writeall(int, char *, int);
+libserv_EXPORT int srv_read(srv_conn *, char *, int);
+libserv_EXPORT int srv_write(srv_conn *, char *, int);
+libserv_EXPORT int srv_readall(srv_conn *, char *, int);
+libserv_EXPORT int srv_writeall(srv_conn *, char *, int);
 
 libserv_EXPORT int srv_connect(char *, char *);
-libserv_EXPORT int srv_close(srv_t *, int);
+libserv_EXPORT int srv_close(srv_conn *);
 
 libserv_EXPORT void srv_set_host(srv_t *, char *);
 libserv_EXPORT void srv_set_port(srv_t *, char *);
 libserv_EXPORT int srv_set_backlog(srv_t *, int);
 libserv_EXPORT int srv_set_maxevents(srv_t *, int);
 
-libserv_EXPORT int srv_notify_event(srv_t *, int, unsigned int);
+libserv_EXPORT int srv_notify_event(srv_conn *, unsigned int);
 libserv_EXPORT int srv_newfd_notify_event(srv_t *, unsigned int);
 
-libserv_EXPORT int srv_hnd_read(srv_t *, void (*)(srv_t *, int));
-libserv_EXPORT int srv_hnd_write(srv_t *, void (*)(srv_t *, int));
-libserv_EXPORT int srv_hnd_accept(srv_t *, void (*)(srv_t *, int, char *, int));
-libserv_EXPORT int srv_hnd_hup(srv_t *, void (*)(srv_t *, int));
-libserv_EXPORT int srv_hnd_rdhup(srv_t *, void (*)(srv_t *, int));
-libserv_EXPORT int srv_hnd_error(srv_t *, void (*)(srv_t *, int, int));
+libserv_EXPORT int srv_hnd_read(srv_t *, void (*)(srv_conn *));
+libserv_EXPORT int srv_hnd_write(srv_t *, void (*)(srv_conn *));
+libserv_EXPORT int srv_hnd_accept(srv_t *, void (*)(srv_conn *));
+libserv_EXPORT int srv_hnd_hup(srv_t *, void (*)(srv_conn *));
+libserv_EXPORT int srv_hnd_rdhup(srv_t *, void (*)(srv_conn *));
+libserv_EXPORT int srv_hnd_error(srv_t *, void (*)(srv_conn *, int));
 
 libserv_EXPORT int srv_get_listenerfd(srv_t *);
 
