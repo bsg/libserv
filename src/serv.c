@@ -122,6 +122,11 @@ int srv_init(srv_t *ctx) {
         return -1;
     }
 
+    /* Initialize the connection list */
+    /* TODO: The number is chosen arbitrarily. Get the fd limits from
+       the OS instead */
+    conn_init(1000000);
+
 #ifdef _WIN32
     if(WSAStartup(MAKEWORD(2,2), &wsaData) != 0) {
         /* TODO: Set errno */
@@ -279,7 +284,6 @@ int srv_run(srv_t *ctx) {
                     conn = new_conn(ctx, cli_fd);
                     conn->host = cli_addr;
                     conn->port = cli_port;
-                    add_conn_by_fd(cli_fd, conn);
 
                     /* Accepted connection. Call the accept handler */
                     if(ctx->hnd_accept) {

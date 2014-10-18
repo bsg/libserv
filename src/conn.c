@@ -22,10 +22,19 @@ SOFTWARE.
 
 #include "serv.h"
 
-/* TODO: !!! FOR POC ONLY !!! Replace with an appropriate data struct */
-srv_conn *conns[1024];
+srv_conn **conns;
+int szconns;
+
+void conn_init(int maxfd) {
+    szconns = maxfd;
+    conns = malloc(maxfd * sizeof(srv_conn *));
+}
 
 srv_conn *new_conn(srv_t *ctx, int fd) {
+    if(fd >= szconns) {
+        return 0;
+    }
+
     srv_conn *conn;
     conn = malloc(sizeof(srv_conn));
     conn->ctx = ctx;
@@ -33,20 +42,22 @@ srv_conn *new_conn(srv_t *ctx, int fd) {
     conn->hnd_read = ctx->hnd_read;
     conn->hnd_write = ctx->hnd_write;
 
+    conns[fd] = conn;
+    
     return conn;
 }
 
-/* TODO: Seems redundant. Integrate into new_conn */
-void add_conn_by_fd(int fd, srv_conn *conn) {
-    conns[fd] = conn;
-}
-
 srv_conn *get_conn_by_fd(int fd) {
+    if(fd >= szconns) {
+        return 0;
+    }
     return conns[fd];
 }
 
 void remove_conn_by_fd(int fd) {
-    free(conns[fd]);
-    conns[fd] = 0;
+    if(fd < szconns) {
+        free(conns[fd]);
+        conns[fd] = 0;
+    }
 }
 
