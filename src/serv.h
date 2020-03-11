@@ -109,7 +109,7 @@ libserv_EXPORT int srv_hnd_error(srv_t *, void (*)(srv_conn *, int));
 
 libserv_EXPORT int srv_get_listenerfd(srv_t *);
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 }
 #endif
 
